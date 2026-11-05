@@ -1,4 +1,5 @@
 import { RollStitcher, rollsToNotes, segmentStarts, sliceSegment } from './kong'
+import { prepareAudio, type PreprocessMode } from './preprocess'
 import type { RawNote } from './types'
 
 /** Runs the piano model on one 10 s window and returns the 4 rolls (ROLL_NAMES order). */
@@ -15,9 +16,11 @@ export const DEFAULT_HOP_SECONDS = 7.5
 export async function transcribePiano(
   audio16k: Float32Array,
   runner: SegmentRunner,
-  opts: { hopSeconds?: number; onProgress?: (done: number, total: number) => void } = {},
+  opts: { hopSeconds?: number; preprocess?: PreprocessMode; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<RawNote[]> {
   const hop = opts.hopSeconds ?? DEFAULT_HOP_SECONDS
+  // bring loud, mastered covers back to the level the model was trained on
+  audio16k = prepareAudio(audio16k, opts.preprocess ?? 'rms')
   const starts = segmentStarts(audio16k.length, hop)
   const stitcher = new RollStitcher(starts.length, audio16k.length, hop)
   opts.onProgress?.(0, starts.length)

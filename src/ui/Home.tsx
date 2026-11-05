@@ -36,7 +36,8 @@ export function Home({ onFile, onOpen, onDownload }: Props) {
     <main className="page">
       <section className="hero">
         <h1>Turn a recording into something you can play.</h1>
-        <p>Drop a piano cover. ezpiano writes a clean two-hand MIDI file for your EZ-220 and lights up the keys while you learn it.</p>
+        <p>Drop a piano cover. ezpiano writes a clean two-hand MIDI file and lights up the keys on your keyboard while you learn it.</p>
+        <p className="supports">Key lights: Yamaha EZ-220, EZ-200, EZ-300, EZ-310 and Casio LK series. Any USB MIDI keyboard works for Wait for me.</p>
       </section>
 
       <section

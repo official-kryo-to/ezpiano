@@ -5,7 +5,7 @@ export const MIN_NOTE_SECONDS = 0.06
 /**
  * Light cleanup of raw transcription:
  *  - merge repeated fragments of the same key (double detections, a held note split in two)
- *  - drop notes shorter than ~60 ms
+ *  - drop notes shorter than ~60 ms when they are also weak (otherwise lengthen them to 60 ms)
  *  - drop ghost notes: very quiet, or much quieter than what is playing around them
  */
 export function cleanNotes(input: RawNote[]): RawNote[] {
@@ -37,8 +37,20 @@ export function cleanNotes(input: RawNote[]): RawNote[] {
     merged = merged.concat(out)
   }
 
-  merged = merged.filter((n) => n.end - n.start >= MIN_NOTE_SECONDS)
   merged.sort((a, b) => a.start - b.start || a.pitch - b.pitch)
+  // Short notes: in fast or staccato playing the model reports many real notes at 30-60 ms, so
+  // length alone says nothing. Drop a short note only when it is also weak for its surroundings;
+  // keep the rest and give them a playable minimum length.
+  const startsAll = merged.map((n) => n.start)
+  merged = merged.filter((n) => {
+    if (n.end - n.start >= MIN_NOTE_SECONDS) return true
+    const lo = lowerBound(startsAll, n.start - 1)
+    const hi = lowerBound(startsAll, n.start + 1)
+    const vels = merged.slice(lo, hi).map((m) => m.velocity).sort((a, b) => a - b)
+    const median = vels[vels.length >> 1] ?? n.velocity
+    return n.end - n.start >= 0.02 && n.velocity >= median * 0.7
+  })
+  for (const n of merged) if (n.end - n.start < MIN_NOTE_SECONDS) n.end = n.start + MIN_NOTE_SECONDS
 
   // octave ghosts: a clearly quieter note exactly one or two octaves above a note struck together
   merged = merged.filter((n, i) => {

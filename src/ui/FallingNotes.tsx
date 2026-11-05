@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { lowerBound, type Player } from '../practice/player'
-import { layout, type KeyRect } from './keyLayout'
+import { layout, letter, type KeyRect } from './keyLayout'
 
 const COLOR = {
   R: { fill: '#8fb3ff', black: '#6c93e6' },
@@ -8,10 +8,24 @@ const COLOR = {
 }
 
 /** Notes falling onto the keyboard, synced to the player clock. */
-export function FallingNotes({ player, bars, pxPerSecond = 140 }: { player: Player; bars: number[]; pxPerSecond?: number }) {
+export function FallingNotes({
+  player,
+  bars,
+  low,
+  high,
+  labels = true,
+  pxPerSecond = 140,
+}: {
+  player: Player
+  bars: number[]
+  low: number
+  high: number
+  labels?: boolean
+  pxPerSecond?: number
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
-  const props = useRef({ bars, pxPerSecond })
-  props.current = { bars, pxPerSecond }
+  const props = useRef({ bars, pxPerSecond, low, high, labels })
+  props.current = { bars, pxPerSecond, low, high, labels }
 
   useEffect(() => {
     const canvas = ref.current!
@@ -21,13 +35,14 @@ export function FallingNotes({ player, bars, pxPerSecond = 140 }: { player: Play
     let h = 0
     let dpr = 1
     let keyOf = new Map<number, KeyRect>()
+    let layoutKey = ''
     const resize = () => {
       dpr = Math.min(2, devicePixelRatio || 1)
       w = canvas.clientWidth
       h = canvas.clientHeight
       canvas.width = Math.round(w * dpr)
       canvas.height = Math.round(h * dpr)
-      keyOf = new Map(layout(w).map((k) => [k.midi, k]))
+      layoutKey = ''
     }
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)
@@ -41,7 +56,12 @@ export function FallingNotes({ player, bars, pxPerSecond = 140 }: { player: Play
 
     const draw = () => {
       raf = requestAnimationFrame(draw)
-      const { bars, pxPerSecond } = props.current
+      const { bars, pxPerSecond, low, high, labels } = props.current
+      const lk = `${w}:${low}:${high}`
+      if (lk !== layoutKey) {
+        layoutKey = lk
+        keyOf = new Map(layout(w, low, high).map((k) => [k.midi, k]))
+      }
       const t = player.t
       const pps = pxPerSecond / Math.max(0.35, player.speed)
       const span = h / pps
@@ -96,6 +116,13 @@ export function FallingNotes({ player, bars, pxPerSecond = 140 }: { player: Play
           ctx.lineWidth = 2
           ctx.strokeStyle = '#ffffff'
           ctx.stroke()
+        }
+        if (labels && nw >= 12 && nh >= 18 && practiced.has(n)) {
+          ctx.fillStyle = 'rgba(12,13,16,0.82)'
+          ctx.font = `600 ${Math.min(12, Math.max(9, nw * 0.5))}px 'Inter Variable', system-ui, sans-serif`
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'bottom'
+          ctx.fillText(letter(n.pitch), x + nw / 2, y0 - 3)
         }
       }
       ctx.globalAlpha = 1

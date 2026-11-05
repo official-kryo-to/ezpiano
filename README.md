@@ -1,11 +1,14 @@
 # ezpiano
 
-**Audio in, learnable MIDI out, practised with the keys lighting up on a Yamaha EZ-220.**
+**Audio in, learnable MIDI out, practised with the keys lighting up on your keyboard.**
 
 Drop a recording (piano covers work best). ezpiano transcribes it in your browser with a piano-specific
 neural network, arranges it for two hands at the difficulty you pick, and gives you a `.mid` file built
-for the EZ-220. Then practise it on the same page: notes fall onto a 61-key keyboard and the real keys
-light up over USB, either in time ("Watch") or one chord at a time until you play it ("Wait for me").
+for your keyboard. Then practise it on the same page: notes fall onto the keyboard on screen and the real
+keys light up over USB, either in time ("Watch") or one chord at a time until you play it ("Wait for me").
+
+Built for the Yamaha EZ-220, and it also lights the keys on the Yamaha EZ-200, EZ-300 and EZ-310 and the
+Casio LK series. Any USB MIDI keyboard or digital piano works for Wait for me.
 
 Everything runs client-side. No upload, no server, no account. It is a static site (GitHub Pages) and an
 installable PWA.
@@ -20,74 +23,140 @@ installable PWA.
      - *Medium*: up to 3 notes per hand, quantized to 1/16
      - *Original*: light cleanup only
    - **Transpose**: -12 to +12 semitones, or **Auto-transpose** to C major / A minor
+   - **Keyboard**: Auto (detected from the USB device) or a model; sets the key range and channels
    - **Quantize to the beat**: on by default
    - **Recording**: Piano (default) or Other instruments (uses Basic Pitch)
 3. Watch the progress (named stages and a time estimate).
-4. On the result screen, preview with falling notes, change speed, loop a section, and press **Download .mid**.
-   **Arrangement** lets you change output, difficulty and transpose afterwards. That takes milliseconds, because the
-   raw transcription is kept.
+4. On the result screen, preview with falling notes, change speed, loop a section, turn on the metronome, and
+   press **Download .mid**. **Arrangement** changes output, difficulty and transpose afterwards in milliseconds,
+   because the raw transcription is kept.
 5. Converted songs are saved on the device (IndexedDB) under **Recent**.
 
-Your last settings are remembered.
+Your last settings and keyboard are remembered.
 
-## Using it with the Yamaha EZ-220
+## Keyboards
 
-1. Connect the EZ-220's **USB TO HOST** port to your computer or Android phone with a USB cable (USB-B on the keyboard side).
-2. Open ezpiano in **Chrome or Edge** (Web MIDI). Safari on iPhone and iPad has no Web MIDI, so the keyboard panel is
-   hidden there; converting and downloading still work.
-3. Open a song, then **Connect keyboard** in the "Keyboard lights" panel and allow MIDI access. The output and input
-   devices are picked automatically and remembered.
+ezpiano picks a profile from the USB device name; you can override it under **Keyboard model**.
+
+| Keyboard | Keys | Keys light for | Exported file |
+|---|---|---|---|
+| Yamaha EZ-220 / EZ-200 (default) | 61 (C2 to C7) | channel 1 (practised hands share it) | Right Hand ch 1, Left Hand ch 2 |
+| Yamaha EZ-300 / EZ-310 | 61 | channel 1 right hand, channel 2 left hand (Light Part 1 and 2) | ch 1 / ch 2 |
+| Casio LK series (LK-S250, LK-S450, LK-280...) | 61 | channel 4 right hand, channel 3 left hand (Navigate channels) | ch 4 / ch 3 |
+| 88 / 76 / 61 / 49 / 37 / 25-key keyboards and controllers | as named | no key lights | ch 1 / ch 2 |
+
+- **Auto-detection** works from the port name: Yamaha keyboards show up as "Digital Keyboard", Casio as
+  "CASIO USB-MIDI", controllers usually include their key count (for example "Keystation 88", "Launchkey 49").
+- **The profile sets** the playable range: notes are moved by octaves to fit, never dropped. It also sets the
+  channels for lights and for the exported file, and the file name (`<song>_ez220.mid`, `<song>_casio-lk.mid`,
+  `<song>_88key.mid`...).
+- **Casio keyboards** all report the same USB name, so a Casio without key lights is detected as LK. Pick its key
+  count instead.
+
+## Practising with your keyboard
+
+1. Connect the keyboard's USB port (on the EZ-220: **USB TO HOST**) to your computer or Android phone.
+2. Open ezpiano in **Chrome or Edge** (Web MIDI). Safari on iPhone and iPad has no Web MIDI, so the keyboard panel
+   is replaced by a short note there; converting and downloading still work.
+3. Press **Connect keyboard** (in the header or the Keyboard panel) and allow MIDI access once. Next time ezpiano
+   reconnects by itself.
 4. Choose a mode and hands:
    - **Watch**: the song plays and the keys light up in time.
-   - **Wait for me**: playback stops at every note or chord of the hand(s) you practise. The keys to press are lit;
-     press them on the EZ-220 (ezpiano reads its MIDI output) and the song moves on. Play ahead and it follows you.
-   - **Right / Left / Both**: the practised hand(s) light up on **channel 1**, the only channel the EZ-220 lights keys
-     for. If you practise one hand, the other hand plays from the app.
-5. **Speed** (25 to 150%) and **A/B loop** work in both modes.
+   - **Wait for me**: the song stops at every note or chord of the hand(s) you practise until you play it.
+     - The next chord is highlighted on screen with its note names and lit on the keyboard, even while paused.
+     - Pressing it starts the song, so there's no need to hit play first.
+     - Playing up to about a beat early counts, and the song simply carries on.
+     - Notes of both hands that land together count as one chord.
+     - Wrong keys flash red on screen, right ones green.
+   - **Right / Left / Both**: if you practise one hand, the other hand plays from the app.
+5. **Speed** (25 to 150%), **A/B loop**, **Metronome** and **App volume** work in both modes.
+
+Without a MIDI keyboard you can still practise: play on the on-screen keys or with the computer keyboard
+(A W S E D F T G Y H U J K, Z / X change octave).
 
 ### Sound routing (no double notes)
 
 - Notes sent to the keyboard are never also played by the app.
-- **"Keyboard plays the guide notes"** (off by default): when off, ezpiano sends **CC 7 = 0** (volume) on channel 1
-  so the keys light silently; leaving the practice screen restores **CC 7 = 100**. In Watch mode the app then
-  plays the lit notes itself, so you still hear the whole song. When on, the keyboard sounds them and the app stays
-  quiet for those notes.
-- Your own playing on the EZ-220 is never echoed through the app.
+- **"Keyboard plays the guide notes"** (off by default): when off, ezpiano sends **CC 7 = 0** (volume) on the light
+  channels so the keys light silently; leaving the practice screen restores **CC 7 = 100**. In Watch mode the app
+  then plays the lit notes itself, so you still hear the whole song. When on, the keyboard sounds them and the app
+  stays quiet for those notes.
+- Your own playing on the keyboard is never echoed through the app.
 - On pause, stop, seek or leaving the page, ezpiano sends note-off for every lit key plus **CC 123 (All Notes Off)**.
 
-> **Check this on real hardware.** Muting with CC 7 = 0 has not been verified on a physical EZ-220 yet. If the
+> **Check this on real hardware.** Muting with CC 7 = 0 has not been verified on a physical keyboard yet. If the
 > lights stop working at volume 0 (or your own playing goes quiet too), set **Silent lights method** to
-> **Velocity 1** in the Keyboard lights panel: lit notes are then sent at velocity 1 and the volume is left alone.
-> **Test lights** runs a C major scale so you can check quickly.
+> **Velocity 1** in the Keyboard panel: lit notes are then sent at velocity 1 and the volume is left alone.
+> **Test lights** runs a scale for each hand so you can check quickly.
 
 ### The MIDI file
 
-- Type 1, two tracks: **"Right Hand" on MIDI channel 1** and **"Left Hand" on channel 2**, both Acoustic Grand
-  (program 0). If you play the file to the EZ-220 from a computer, the right hand lights up.
-- Every note fits the 61 keys (MIDI 36 to 96, C2 to C7). Out-of-range notes are moved by octaves, never dropped.
+- Type 1, two tracks: **"Right Hand"** and **"Left Hand"**, both Acoustic Grand (program 0), on the channels of your
+  keyboard profile (EZ-220: right hand on channel 1, which lights up if you play the file to the keyboard from a
+  computer).
+- Every note fits the keyboard's range (EZ-220: MIDI 36 to 96, C2 to C7), moved by octaves, never dropped.
 - The detected BPM and 4/4 are written to the header. Notes sit on the detected beat grid, so bars line up in any
   DAW. Performances that drift get a tempo map that follows the player.
-- File name: `<original name>_ez220.mid`.
 
 ## How it works
 
 ```
 audio file
   -> Web Audio decode, resampled to 16 kHz mono (OfflineAudioContext; 30 s chunks if needed)
+  -> loudness check: mastered covers louder than -20 dBFS are turned down to the level the model was trained on
   -> Web Worker: onnxruntime-web (WebGPU if available, else multi-threaded WebAssembly)
        piano model on 10 s windows, 7.5 s apart, stitched -> onset/offset/frame/velocity rolls (100 fps)
        -> notes (port of the reference post-processing)
-  -> cleanup: merge repeated fragments, drop notes < 60 ms, drop ghost notes (incl. octave ghosts)
-  -> tempo: inter-onset-interval histogram + dynamic-programming beat tracker + downbeat (chord changes, bass)
-  -> hands: skyline melody = right hand, the rest = left hand (Full keeps close inner voices in the right hand),
-     difficulty rules, chord detection for the left-hand chords, quantize, transpose / auto key, octave-fit to
-     C2..C7, polyphony caps (max 4 per hand)
+  -> cleanup: merge repeated fragments, drop ghost and octave-ghost notes, give short staccato notes a playable length
+  -> tempo: inter-onset-interval histogram + dynamic-programming beat tracker, on-beat check, downbeat (bass, accents, harmony)
+  -> key: Temperley profiles for the key signature, Albrecht-Shanahan for major vs minor
+  -> hands: melody by dynamic programming (loudness, contour, top of chord) = right hand, the rest = left hand,
+     difficulty rules, chord detection for the left-hand chords, quantize, transpose / auto key,
+     octave-fit to the keyboard, polyphony caps (max 4 per hand)
   -> @tonejs/midi writer
 ```
 
 The UI thread never runs the model. GitHub Pages can't send the COOP/COEP headers that WebAssembly threads need,
 so the service worker adds them to the page it serves. After the first load the page is cross-origin isolated
 and conversion uses several CPU cores.
+
+## Quality on pop piano covers
+
+Clean classical recordings (the benchmark below) are the easy case. To tune ezpiano for what people actually
+drop in, there's a dev set built from [POP909](https://github.com/music-x-lab/POP909-Dataset) (MIT): pop songs
+arranged for piano with separate melody tracks plus beat, chord and key annotations.
+
+- **Clips:** 32 excerpts of 40 s.
+- **Audio:** rendered with a sampled grand, once clean and once as a typical "YouTube cover" (room reverb,
+  compression and limiting to -13 dBFS, MP3 at 128 kbps).
+- **Split:** weights were tuned on 16 songs; the table shows the other 16, never used for tuning.
+
+| Held-out, cover-style audio | Before | After |
+|---|---|---|
+| Note F1 (onset 50 ms) | 0.885 | **0.921** |
+| Melody F1 (right hand vs the real tune, 100 ms) | 0.504 | **0.675** |
+| Beat F (70 ms) | 0.743 | **0.768** |
+| Downbeat F | 0.608 | **0.632** |
+| Chord root accuracy (left hand) | 0.892 | 0.894 |
+
+**What made the difference**
+
+- **Loudness check:** mastered covers are 10 to 15 dB louder than the model's training data. Turning them down
+  to that level (-24 dBFS) removes many false notes:
+  - note F1 on cover audio 0.895 to 0.926,
+  - on a clean but loud copy 0.893 to 0.923.
+
+  Recordings that are already at a normal level are left alone.
+- **Melody by dynamic programming** instead of "always the top note": pop arrangements often have accompaniment
+  above the tune.
+- **Cleanup fix:** the old 60 ms minimum length deleted real notes in fast playing (a Scarlatti sonata went from
+  F1 0.960 to 0.628 after cleanup). Now short notes are dropped only if they are also weak.
+- **Tempo and key:**
+  - a tempo prior around 80 BPM, downbeats weighted by accents and bass, and an on-beat check for syncopated
+    songs (beat F on the tuning set 0.70 to 0.78),
+  - key detection with Temperley + Albrecht-Shanahan profiles (exact key 90% to 97%).
+
+Reproduce with `scripts/devset/` (prep, render, `eval.ts`).
 
 ## Model
 
@@ -158,6 +227,18 @@ pip install onnx onnxruntime torchlibrosa librosa numpy audioread
 pip install --no-deps piano_transcription_inference
 python scripts/export_model.py --out public/models/kong-piano-int8.onnx   # downloads the checkpoint (172 MB)
 ```
+
+### Dev set (pop covers)
+
+```bash
+git clone --depth 1 https://github.com/music-x-lab/POP909-Dataset
+python -I scripts/devset/prep_pop909.py POP909-Dataset/POP909 devset/gt 003,027,051,088,120,154   # pip install mido
+npm i --no-save tone@15 && node scripts/devset/render.cjs node_modules/tone/build/Tone.js devset/dry devset/gt/*.json
+npx tsx scripts/devset/eval.ts devset/gt devset/dry
+```
+
+Cover-style versions: `ffmpeg -i in.wav -i ir.wav -filter_complex "[0][1]afir=dry=10:wet=10,acompressor=threshold=0.08:ratio=4:makeup=6,alimiter=limit=0.95"`
+then an MP3 round trip at 128 kbps.
 
 ### Re-run the benchmark
 

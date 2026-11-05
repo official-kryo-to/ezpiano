@@ -58,6 +58,33 @@ describe('transcription of the bundled clip', () => {
   })
 })
 
+describe('arrangement quality', () => {
+  it('the right hand plays the actual tune', async () => {
+    const ref: RawNote[] = (await import('./fixtures/ode-to-joy-8s.notes.json')).default
+    const tune = ref.filter((n) => n.pitch >= 60) // the right-hand line of the rendered clip
+    const arr = arrange(clean, grid, { output: 'melody', difficulty: 'original', transpose: 0, autoTranspose: false, quantize: false })
+    const origin = grid.beats[0]
+    const rh = arr.notes.filter((n) => n.hand === 'R')
+    const used = new Set<number>()
+    let hits = 0
+    for (const r of tune) {
+      const i = rh.findIndex((n, k) => !used.has(k) && n.pitch === r.pitch && Math.abs(n.start + origin - r.start) < 0.08)
+      if (i >= 0) {
+        used.add(i)
+        hits++
+      }
+    }
+    const precision = hits / rh.length
+    const recall = hits / tune.length
+    expect(recall).toBeGreaterThan(0.85)
+    expect(precision).toBeGreaterThan(0.85)
+  })
+
+  it('the first downbeat is the first note (the clip starts on beat 1)', () => {
+    expect(Math.abs(grid.beats[0] - clean[0].start)).toBeLessThan(0.06)
+  })
+})
+
 describe.each(OUTPUTS)('MIDI output: %s', (output) => {
   it.each(LEVELS)('%s difficulty', (difficulty) => {
     const settings: ArrangeSettings = { output, difficulty, transpose: 0, autoTranspose: false, quantize: true }

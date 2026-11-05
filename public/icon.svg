@@ -1,18 +1,57 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#0c0d10"/>
-  <rect x="0.5" y="0.5" width="511" height="511" rx="111.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
-  <!-- falling notes: right hand (blue) and left hand (amber) -->
-  <rect x="300" y="92" width="44" height="132" rx="10" fill="#8fb3ff"/>
-  <rect x="168" y="150" width="44" height="74" rx="10" fill="#e6b47a"/>
-  <!-- keys -->
-  <rect x="96" y="248" width="320" height="168" rx="18" fill="#eceef2"/>
-  <rect x="160" y="248" width="4" height="168" fill="#b9bcc6"/>
-  <rect x="224" y="248" width="4" height="168" fill="#b9bcc6"/>
-  <rect x="288" y="248" width="4" height="168" fill="#b9bcc6"/>
-  <rect x="352" y="248" width="4" height="168" fill="#b9bcc6"/>
-  <rect x="140" y="248" width="36" height="96" rx="6" fill="#16171c"/>
-  <rect x="208" y="248" width="36" height="96" rx="6" fill="#16171c"/>
-  <rect x="336" y="248" width="36" height="96" rx="6" fill="#16171c"/>
-  <rect x="292" y="250" width="60" height="164" fill="#8fb3ff" fill-opacity="0.55"/>
-  <rect x="336" y="248" width="36" height="96" rx="6" fill="#16171c"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1d25"/>
+      <stop offset="1" stop-color="#0a0b0e"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.02"/>
+    </linearGradient>
+    <linearGradient id="rh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fb3ff" stop-opacity="0"/>
+      <stop offset="0.45" stop-color="#8fb3ff"/>
+      <stop offset="1" stop-color="#b3cbff"/>
+    </linearGradient>
+    <linearGradient id="lh" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6b47a" stop-opacity="0.2"/>
+      <stop offset="0.6" stop-color="#e6b47a"/>
+      <stop offset="1" stop-color="#f2cd9e"/>
+    </linearGradient>
+    <linearGradient id="white" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e9ebf0"/>
+      <stop offset="1" stop-color="#f8f9fb"/>
+    </linearGradient>
+    <linearGradient id="litR" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8fb3ff"/>
+      <stop offset="1" stop-color="#bcd1ff"/>
+    </linearGradient>
+    <linearGradient id="litL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e6b47a"/>
+      <stop offset="1" stop-color="#f4d6ae"/>
+    </linearGradient>
+    <clipPath id="tile"><rect width="512" height="512" rx="116"/></clipPath>
+    <clipPath id="keys"><path d="M56 292 H456 V430 a26 26 0 0 1 -26 26 H82 a26 26 0 0 1 -26 -26 Z"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+    <!-- a sound wave turning into a note -->
+    <path d="M64 176 C 84 176, 92 132, 112 132 S 136 222, 158 222 S 182 150, 204 150"
+          fill="none" stroke="#ffffff" stroke-opacity="0.2" stroke-width="13" stroke-linecap="round"/>
+    <rect x="190" y="70" width="58" height="200" rx="15" fill="url(#rh)"/>
+    <rect x="392" y="196" width="54" height="74" rx="15" fill="url(#lh)"/>
+    <!-- four white keys, two black keys -->
+    <g clip-path="url(#keys)">
+      <rect x="56" y="292" width="400" height="164" fill="url(#white)"/>
+      <rect x="156" y="292" width="100" height="164" fill="url(#litR)"/>
+      <rect x="356" y="292" width="100" height="164" fill="url(#litL)"/>
+      <rect x="155" y="292" width="3" height="164" fill="#a9aebb"/>
+      <rect x="255" y="292" width="3" height="164" fill="#a9aebb"/>
+      <rect x="355" y="292" width="3" height="164" fill="#a9aebb"/>
+      <rect x="128" y="292" width="54" height="94" rx="8" fill="#15161b"/>
+      <rect x="328" y="292" width="54" height="94" rx="8" fill="#15161b"/>
+      <rect x="56" y="292" width="400" height="8" fill="#000" opacity="0.25"/>
+    </g>
+    <rect width="512" height="512" rx="116" fill="none" stroke="url(#rim)" stroke-width="4"/>
+  </g>
 </svg>

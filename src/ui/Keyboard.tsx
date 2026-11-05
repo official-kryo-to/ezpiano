@@ -1,14 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { keys } from '../practice/keys'
-import { layout, noteName } from './keyLayout'
+import { layout, letter, noteName } from './keyLayout'
 
 export interface KeyMarks {
   hand: Map<number, 'R' | 'L'>
-  target: Set<number>
+  target: Map<number, 'R' | 'L'>
+  flash: Map<number, 'good' | 'bad'>
 }
 
-/** The EZ-220's 61 keys (C2..C7). Shows what is sounding and can be played with mouse or touch. */
-export function Keyboard({ marks }: { marks: KeyMarks }) {
+/** The keyboard's keys. Shows what is sounding, what to press next, and takes mouse or touch. */
+export function Keyboard({ marks, low, high }: { marks: KeyMarks; low: number; high: number }) {
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const [pressed, setPressed] = useState<Set<number>>(new Set())
@@ -22,7 +23,7 @@ export function Keyboard({ marks }: { marks: KeyMarks }) {
   }, [])
   useEffect(() => keys.subscribe(() => setPressed(new Set(keys.held))), [])
 
-  const rects = useMemo(() => layout(width), [width])
+  const rects = useMemo(() => layout(width, low, high), [width, low, high])
   const keyAt = (cx: number, cy: number) => {
     const r = ref.current!.getBoundingClientRect()
     const x = cx - r.left
@@ -40,7 +41,7 @@ export function Keyboard({ marks }: { marks: KeyMarks }) {
       ref={ref}
       className="kb"
       role="img"
-      aria-label="61-key keyboard, C2 to C7"
+      aria-label={`${high - low + 1}-key keyboard`}
       onPointerDown={(e) => {
         const m = keyAt(e.clientX, e.clientY)
         if (m == null) return
@@ -74,11 +75,19 @@ export function Keyboard({ marks }: { marks: KeyMarks }) {
     >
       {width > 0 &&
         rects.map((k) => {
-          const hand = marks.hand.get(k.midi)
-          const cls = ['key', k.black ? 'b' : 'w', hand ?? '', marks.target.has(k.midi) ? 'target' : '', pressed.has(k.midi) ? 'pressed' : ''].join(' ')
+          const target = marks.target.get(k.midi)
+          const hand = marks.hand.get(k.midi) ?? target
+          const flash = marks.flash.get(k.midi)
+          const cls = ['key', k.black ? 'b' : 'w', hand ?? '', target ? 'target' : '', flash ?? '', pressed.has(k.midi) ? 'pressed' : '']
+            .filter(Boolean)
+            .join(' ')
           return (
             <div key={k.midi} className={cls} style={{ left: k.x, width: k.w }}>
-              {!k.black && k.midi % 12 === 0 && k.w > 9 && <span className="key-c">{noteName(k.midi)}</span>}
+              {target && k.w > 9 ? (
+                <span className="key-name">{letter(k.midi)}</span>
+              ) : (
+                !k.black && k.midi % 12 === 0 && k.w > 9 && <span className="key-c">{noteName(k.midi)}</span>
+              )}
             </div>
           )
         })}

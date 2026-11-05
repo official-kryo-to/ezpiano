@@ -29,6 +29,8 @@ export interface ArrangeSettings {
   transpose: number // -12..12, ignored when autoTranspose is on
   autoTranspose: boolean
   quantize: boolean
+  /** playable keys (MIDI numbers, inclusive). Defaults to the EZ-220's 61 keys, C2..C7. */
+  range?: { low: number; high: number }
 }
 
 export interface ConvertSettings extends ArrangeSettings {
@@ -67,7 +69,7 @@ export interface Arrangement {
   duration: number
 }
 
-/** Hard limits for the EZ-220 (61 keys, C2..C7). */
+/** Default range: the EZ-220's 61 keys, C2..C7. Keyboard profiles can change it. */
 export const KEY_LOW = 36
 export const KEY_HIGH = 96
 

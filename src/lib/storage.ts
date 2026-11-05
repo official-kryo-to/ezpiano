@@ -72,6 +72,10 @@ export interface MidiPrefs {
   inputName: string
   guideSound: boolean
   silentMethod: 'volume' | 'velocity'
+  /** 'auto' (detect from the device name) or a keyboard profile id */
+  keyboardId: string
+  /** app sound volume 0..1 */
+  volume: number
 }
 
 export const DEFAULT_MIDI_PREFS: MidiPrefs = {
@@ -81,6 +85,8 @@ export const DEFAULT_MIDI_PREFS: MidiPrefs = {
   inputName: '',
   guideSound: false,
   silentMethod: 'volume',
+  keyboardId: 'auto',
+  volume: 0.8,
 }
 
 export const loadMidiPrefs = () => read<MidiPrefs>('ezpiano:midi', DEFAULT_MIDI_PREFS)

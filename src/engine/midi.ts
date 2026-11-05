@@ -5,11 +5,12 @@ export const RH_CHANNEL = 0 // MIDI channel 1: the only channel the EZ-220 light
 export const LH_CHANNEL = 1 // MIDI channel 2
 
 /**
- * Type 1 MIDI with two tracks ("Right Hand" on channel 1, "Left Hand" on channel 2), both
+ * Type 1 MIDI with two tracks ("Right Hand" on channel 1, "Left Hand" on channel 2 by default;
+ * keyboard profiles can change the channels, e.g. Casio LK uses 4 and 3), both
  * Acoustic Grand Piano. Notes are placed on the beat grid, so bars line up in any DAW.
  * Steady performances get one tempo; drifting ones get a tempo map that follows the player.
  */
-export function buildMidi(arr: Arrangement, title: string): Uint8Array {
+export function buildMidi(arr: Arrangement, title: string, channels = { rh: RH_CHANNEL, lh: LH_CHANNEL }): Uint8Array {
   const midi = new Midi()
   midi.header.name = title
   const ppq = midi.header.ppq
@@ -33,11 +34,11 @@ export function buildMidi(arr: Arrangement, title: string): Uint8Array {
 
   const rh = midi.addTrack()
   rh.name = 'Right Hand'
-  rh.channel = RH_CHANNEL
+  rh.channel = channels.rh
   rh.instrument.number = 0
   const lh = midi.addTrack()
   lh.name = 'Left Hand'
-  lh.channel = LH_CHANNEL
+  lh.channel = channels.lh
   lh.instrument.number = 0
 
   for (const n of arr.notes) {
@@ -48,7 +49,7 @@ export function buildMidi(arr: Arrangement, title: string): Uint8Array {
   return midi.toArray()
 }
 
-export function midiFileName(original: string): string {
+export function midiFileName(original: string, suffix = 'ez220'): string {
   const base = original.replace(/\.[^.]+$/, '').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'song'
-  return `${base}_ez220.mid`
+  return `${base}_${suffix}.mid`
 }

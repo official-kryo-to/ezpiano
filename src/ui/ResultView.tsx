@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { keyName } from '../engine/arrange'
 import type { Arrangement } from '../engine/types'
+import { audio } from '../lib/audio'
+import { midi } from '../lib/midi'
 import { keys } from '../practice/keys'
 import { Player, type HandSel, type Mode } from '../practice/player'
-import { Segmented, fmtTime } from './controls'
+import { Segmented, Toggle, fmtTime } from './controls'
 import { FallingNotes } from './FallingNotes'
 import { IconBack, IconDownload, IconPause, IconPlay, IconRestart, IconSliders } from './icons'
 import { Keyboard, type KeyMarks } from './Keyboard'
+import { noteName } from './keyLayout'
 import { KeyboardPanel, useMidiStatus } from './KeyboardPanel'
 
 interface Props {
@@ -21,9 +24,11 @@ interface Props {
 export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit }: Props) {
   const player = useMemo(() => new Player(), [])
   const [, force] = useState(0)
-  const [marks, setMarks] = useState<KeyMarks>({ hand: new Map(), target: new Set() })
+  const [marks, setMarks] = useState<KeyMarks>({ hand: new Map(), target: new Map(), flash: new Map() })
+  const [volume, setVolume] = useState(midi.prefs.volume)
   const [loopA, setLoopA] = useState<number | null>(null)
   const status = useMidiStatus()
+  const { low, high } = status.profile
   const scrubRef = useRef<HTMLInputElement>(null)
   const timeRef = useRef<HTMLSpanElement>(null)
   const scrubbing = useRef(false)
@@ -34,15 +39,17 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
   }, [arrangement])
 
   useEffect(() => {
-    player.load(arrangement.notes, arrangement.duration)
+    const b = arrangement.grid.beats
+    player.load(arrangement.notes, arrangement.duration, b.map((x) => x - b[0]))
   }, [player, arrangement])
   useEffect(() => player.onChange(() => force((x) => x + 1)), [player])
   useEffect(() => keys.subscribe((e) => e.type === 'on' && player.handleKey(e.note)), [player])
   // re-route sound when the keyboard connects or its settings change
   useEffect(() => {
     player.reroute()
-    if (player.playing) player.seek(player.t)
-  }, [player, status.output?.id])
+    player.seek(player.t)
+  }, [player, status.output?.id, status.profile.id])
+  useEffect(() => audio.setVolume(volume), [volume])
   useEffect(() => () => player.dispose(), [player])
 
   // clock + key highlights
@@ -60,14 +67,22 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
         if (n.start > t + 0.005) break
         if (n.end > t && practiced.has(n)) hand.set(n.pitch, n.hand)
       }
-      const target = new Set(player.targets.map((n) => n.pitch))
+      const target = new Map(player.targets.map((n) => [n.pitch, n.hand] as const))
+      const flash = new Map<number, 'good' | 'bad'>()
+      const now = performance.now()
+      for (const [k, f] of player.flashes) {
+        if (f.until < now) player.flashes.delete(k)
+        else flash.set(k, f.kind)
+      }
       let s = ''
       for (const [k, v] of hand) s += `${k}${v}`
       s += '|'
-      for (const k of target) s += `${k},`
+      for (const [k, v] of target) s += `${k}${v},`
+      s += '|'
+      for (const [k, v] of flash) s += `${k}${v},`
       if (s !== sig) {
         sig = s
-        setMarks({ hand, target })
+        setMarks({ hand, target, flash })
       }
     }
     raf = requestAnimationFrame(loop)
@@ -133,11 +148,28 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
 
       <div className="stagebox">
         <div className="fall">
-          <FallingNotes player={player} bars={bars} />
-          {player.waiting && <div className="fall-overlay">Play the {player.targets.length > 1 ? 'highlighted keys' : 'highlighted key'}</div>}
-          {player.finished && <div className="fall-overlay">Done. Press play to go again.</div>}
+          <FallingNotes player={player} bars={bars} low={low} high={high} />
+          {player.mode === 'wait' && !player.finished && player.targets.length > 0 && (player.waiting || !player.playing) && (
+            <div className="fall-overlay" aria-live="polite">
+              {player.playing ? 'Play ' : 'Press '}
+              <b>
+                {[...player.targets]
+                  .sort((a, b) => a.pitch - b.pitch)
+                  .map((n) => noteName(n.pitch))
+                  .join(' + ')}
+              </b>
+              {player.playing ? '' : ' to start'}
+            </div>
+          )}
+          {player.finished && (
+            <div className="fall-overlay">
+              {player.mode === 'wait' && player.stats.hits + player.stats.wrong > 0
+                ? `Done: ${Math.round((player.stats.hits / (player.stats.hits + player.stats.wrong)) * 100)}% right. Press play to go again.`
+                : 'Done. Press play to go again.'}
+            </div>
+          )}
         </div>
-        <Keyboard marks={marks} />
+        <Keyboard marks={marks} low={low} high={high} />
         <div className="transport">
           <button className="play" onClick={() => player.toggle()} aria-label={player.playing ? 'Pause' : 'Play'}>
             {player.playing ? <IconPause /> : <IconPlay />}
@@ -236,6 +268,28 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
               )}
             </div>
           </div>
+          <div className="ctl">
+            <Toggle label="Metronome" checked={player.metronome} onChange={(v) => player.setMetronome(v)} />
+          </div>
+          <div className="ctl">
+            <label className="ctl-label" htmlFor="vol">
+              <span>App volume</span>
+              <span className="num">{Math.round(volume * 100)}%</span>
+            </label>
+            <input
+              id="vol"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={volume}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                setVolume(v)
+                midi.setPrefs({ volume: v })
+              }}
+            />
+          </div>
           {player.mode === 'wait' && (
             <p className="score num" aria-live="polite">
               <span>{player.stats.hits} right</span>
@@ -243,8 +297,11 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
             </p>
           )}
           <p className="kb-note" style={{ marginTop: 12 }}>
+            {player.mode === 'wait'
+              ? 'The song stops at each highlighted chord and goes on when you play it. Playing a little early is fine. '
+              : ''}
             {player.hands !== 'both' ? 'The other hand plays from this device. ' : ''}
-            {status.output ? 'Keys light up on the keyboard (channel 1).' : 'Space plays and pauses. You can also play on screen or with A W S E D keys.'}
+            {status.output ? '' : 'Space plays and pauses. Without a keyboard, play on screen or with the A W S E D F G keys (Z / X change octave).'}
           </p>
         </section>
 

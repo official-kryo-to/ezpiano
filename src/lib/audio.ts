@@ -136,6 +136,22 @@ class AudioEngine {
     }
   }
 
+  /** Short metronome click at an AudioContext time. */
+  click(time: number, accent = false) {
+    if (!this.ctx || !this.master) return
+    const ctx = this.ctx
+    const osc = ctx.createOscillator()
+    const g = ctx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = accent ? 1760 : 1320
+    g.gain.setValueAtTime(0, time)
+    g.gain.linearRampToValueAtTime(accent ? 0.32 : 0.2, time + 0.002)
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.06)
+    osc.connect(g).connect(this.master)
+    osc.start(time)
+    osc.stop(time + 0.08)
+  }
+
   stopAll() {
     this.piano?.stop()
     this.live.clear()

@@ -4,6 +4,7 @@ import { midiFileName } from './engine/midi'
 import { packNotes, unpackNotes } from './engine/transcribe'
 import type { BeatGrid, ConvertSettings, EngineKind, RawNote } from './engine/types'
 import { getRecent, loadSettings, saveRecent, saveSettings, updateRecent } from './lib/storage'
+import { midi } from './lib/midi'
 import { installComputerKeys } from './practice/keys'
 import { useMidiStatus } from './ui/KeyboardPanel'
 import { Home } from './ui/Home'
@@ -56,14 +57,36 @@ export default function App() {
 
   useEffect(() => installComputerKeys(), [])
   useEffect(() => {
+    void midi.reconnectIfAllowed()
+  }, [])
+  useEffect(() => {
     if (!toast) return
     const id = setTimeout(() => setToast(null), 3500)
     return () => clearTimeout(id)
   }, [toast])
 
+  const profile = midiStatus.profile
+  const fit = useCallback(
+    (s: ConvertSettings): ConvertSettings => ({ ...s, range: { low: profile.low, high: profile.high } }),
+    [profile.low, profile.high],
+  )
+
   const showResult = useCallback((song: Song, result: Result) => {
     setScreen({ kind: 'result', song: { ...song, cache: { clean: result.clean, grid: result.grid } }, result })
   }, [])
+
+  // switching keyboards changes the playable range and the file channels: re-arrange instantly
+  useEffect(() => {
+    setScreen((sc) => {
+      if (sc.kind !== 'result') return sc
+      const settings = fit(sc.song.settings)
+      if (JSON.stringify(settings.range) === JSON.stringify(sc.song.settings.range) && sc.result.midi.length) {
+        return { ...sc, result: buildResult(sc.song.raw, settings, sc.song.title, sc.song.cache, profile.file) }
+      }
+      const song = { ...sc.song, settings }
+      return { kind: 'result', song, result: buildResult(song.raw, settings, song.title, song.cache, profile.file) }
+    })
+  }, [profile.id, fit, profile.file])
 
   const convert = async (file: File, settings: ConvertSettings) => {
     saveSettings(settings)
@@ -77,7 +100,7 @@ export default function App() {
       const tr = await transcribeFile(file, settings.engine, setProgress, ac.signal)
       if (!tr.raw.length) throw new Error('No notes were found in this recording.')
       const title = titleOf(file.name)
-      const result = await buildResultWithStages(tr.raw, settings, title, setProgress)
+      const result = await buildResultWithStages(tr.raw, fit(settings), title, setProgress, profile.file)
       const song: Song = { id: `${Date.now()}`, title, fileName: file.name, duration: tr.duration, engine: settings.engine, raw: tr.raw, settings }
       await saveRecent({
         id: song.id,
@@ -104,14 +127,14 @@ export default function App() {
   const openRecent = async (id: string) => {
     const r = await getRecent(id)
     if (!r) return setToast('That song is no longer saved.')
-    const song: Song = { id: r.id, title: r.title, fileName: r.fileName, duration: r.duration, engine: r.engine, raw: unpackNotes(r.notes), settings: r.settings }
-    showResult(song, buildResult(song.raw, song.settings, song.title))
+    const song: Song = { id: r.id, title: r.title, fileName: r.fileName, duration: r.duration, engine: r.engine, raw: unpackNotes(r.notes), settings: fit(r.settings) }
+    showResult(song, buildResult(song.raw, song.settings, song.title, undefined, profile.file))
   }
 
   const downloadRecent = async (id: string) => {
     const r = await getRecent(id)
     if (!r) return
-    download(buildResult(unpackNotes(r.notes), r.settings, r.title).midi, midiFileName(r.fileName))
+    download(buildResult(unpackNotes(r.notes), fit(r.settings), r.title, undefined, profile.file).midi, midiFileName(r.fileName, profile.short))
   }
 
   const engineLabel = (e: EngineKind) => (e === 'piano' ? 'Piano model' : 'Basic Pitch')
@@ -120,13 +143,18 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          ezpiano <small>for Yamaha EZ-220</small>
+          ezpiano <small>recordings you can play</small>
         </div>
         {midiStatus.supported && (
-          <span className="status-pill" aria-live="polite">
+          <button
+            className="status-pill"
+            aria-live="polite"
+            onClick={() => !midiStatus.output && midi.connect()}
+            title={midiStatus.output ? `${midiStatus.output.name} (${profile.name})` : 'Connect a keyboard over USB'}
+          >
             <span className={`dot ${midiStatus.output ? 'ok' : ''}`} />
-            {midiStatus.output ? midiStatus.output.name : 'Keyboard not connected'}
-          </span>
+            {midiStatus.output ? profile.name : midiStatus.state === 'asking' ? 'Connecting…' : 'Connect keyboard'}
+          </button>
         )}
       </header>
 
@@ -148,13 +176,14 @@ export default function App() {
           duration={screen.song.duration}
           initial={screen.song.settings}
           instant
-          onBack={() => showResult(screen.song, buildResult(screen.song.raw, screen.song.settings, screen.song.title, screen.song.cache))}
+          onBack={() => showResult(screen.song, buildResult(screen.song.raw, screen.song.settings, screen.song.title, screen.song.cache, profile.file))}
           onConvert={(s) => {
-            const settings = { ...s, engine: screen.song.engine }
+            const settings = fit({ ...s, engine: screen.song.engine })
             saveSettings(settings)
             const song = { ...screen.song, settings }
-            void updateRecent(song.id, { settings })
-            showResult(song, buildResult(song.raw, settings, song.title, song.cache))
+            const result = buildResult(song.raw, settings, song.title, song.cache, profile.file)
+            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.grid.bpm })
+            showResult(song, result)
           }}
         />
       )}
@@ -180,7 +209,7 @@ export default function App() {
           engineLabel={engineLabel(screen.song.engine)}
           onBack={() => setScreen({ kind: 'home' })}
           onEdit={() => setScreen({ kind: 'rearrange', song: screen.song })}
-          onDownload={() => download(screen.result.midi, midiFileName(screen.song.fileName))}
+          onDownload={() => download(screen.result.midi, midiFileName(screen.song.fileName, profile.short))}
         />
       )}
 

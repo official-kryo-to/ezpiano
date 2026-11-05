@@ -121,11 +121,19 @@ export interface Result {
 }
 
 /** Everything after the model. Fast (milliseconds), so it can re-run when settings change. */
-export function buildResult(raw: RawNote[], settings: ArrangeSettings, title: string, cached?: { clean: RawNote[]; grid: BeatGrid }): Result {
+export type Channels = { rh: number; lh: number }
+
+export function buildResult(
+  raw: RawNote[],
+  settings: ArrangeSettings,
+  title: string,
+  cached?: { clean: RawNote[]; grid: BeatGrid },
+  channels?: Channels,
+): Result {
   const clean = cached?.clean ?? cleanNotes(raw)
   const grid = cached?.grid ?? analyzeTempo(clean)
   const arrangement = arrange(clean, grid, settings)
-  return { arrangement, midi: buildMidi(arrangement, title), clean, grid }
+  return { arrangement, midi: buildMidi(arrangement, title, channels), clean, grid }
 }
 
 /** Same as buildResult, but walks the UI through the named stages. */
@@ -134,6 +142,7 @@ export async function buildResultWithStages(
   settings: ArrangeSettings,
   title: string,
   onProgress: (p: Progress) => void,
+  channels?: Channels,
 ): Promise<Result> {
   const tick = () => new Promise((r) => setTimeout(r, 120))
   onProgress({ stage: 'cleanup', fraction: 0 })
@@ -147,5 +156,5 @@ export async function buildResultWithStages(
   const arrangement = arrange(clean, grid, settings)
   onProgress({ stage: 'midi', fraction: 0 })
   await tick()
-  return { arrangement, midi: buildMidi(arrangement, title), clean, grid }
+  return { arrangement, midi: buildMidi(arrangement, title, channels), clean, grid }
 }

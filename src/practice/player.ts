@@ -6,7 +6,7 @@
  *
  * Who makes which sound:
  *  - the hand you are NOT practising is always played by the app
- *  - practised notes go to the keyboard as lights (channel 1)
+ *  - practised notes go to the keyboard as lights (on the profile's channels)
  *  - in Watch mode the app also plays the practised notes, unless the keyboard is set to play
  *    them ("Keyboard plays the guide notes"), so nothing ever sounds twice
  *  - in Wait mode practised notes are yours to play: the app stays quiet for them
@@ -19,13 +19,16 @@ export type Mode = 'watch' | 'wait'
 export type HandSel = Hand | 'both'
 
 const LOOKAHEAD = 0.12 // s of song time scheduled ahead for audio
-const MIDI_AHEAD_MS = 25 // lights are scheduled with timestamps up to this far ahead
+const MIDI_AHEAD = 0.025 // s: lights are scheduled with timestamps up to this far ahead
+const CHORD_WINDOW = 0.08 // notes starting this close together are one chord
+const FLASH_MS = 260
 
 interface LightEvent {
   t: number
   on: boolean
   note: number
   vel: number
+  hand: Hand
 }
 
 export interface Stats {
@@ -42,6 +45,10 @@ export class Player {
   hands: HandSel = 'both'
   speed = 1
   loop: { a: number; b: number } | null = null
+  metronome = false
+  /** beat times (s) and which are bar starts, for the metronome */
+  beats: number[] = []
+  private beatIdx = 0
 
   t = 0
   playing = false
@@ -49,6 +56,8 @@ export class Player {
   finished = false
   chordIdx = 0
   stats: Stats = { hits: 0, wrong: 0 }
+  /** recent key feedback for the on-screen keyboard */
+  flashes = new Map<number, { kind: 'good' | 'bad'; until: number }>()
 
   private sound: ArrangedNote[] = []
   private lights: LightEvent[] = []
@@ -58,7 +67,6 @@ export class Player {
   private ctxStart = 0
   private songStart = 0
   private chordHits = new Set<ArrangedNote>()
-  private litChord: ArrangedNote[] = []
   private listeners = new Set<() => void>()
 
   onChange(fn: () => void) {
@@ -71,9 +79,10 @@ export class Player {
     this.listeners.forEach((l) => l())
   }
 
-  load(notes: ArrangedNote[], duration: number) {
+  load(notes: ArrangedNote[], duration: number, beats: number[] = []) {
     this.all = notes
     this.duration = duration
+    this.beats = beats
     this.finished = false
     this.reroute()
     this.seek(0)
@@ -90,18 +99,19 @@ export class Player {
     this.lights = []
     if (this.mode === 'watch') {
       for (const n of this.practiced) {
-        this.lights.push({ t: n.start, on: true, note: n.pitch, vel: n.velocity })
-        this.lights.push({ t: Math.max(n.start + 0.02, n.end - 0.01), on: false, note: n.pitch, vel: 0 })
+        this.lights.push({ t: n.start, on: true, note: n.pitch, vel: n.velocity, hand: n.hand })
+        this.lights.push({ t: Math.max(n.start + 0.02, n.end - 0.01), on: false, note: n.pitch, vel: 0, hand: n.hand })
       }
       // offs before ons at the same moment, so repeated notes re-light
       this.lights.sort((a, b) => a.t - b.t || Number(a.on) - Number(b.on))
     }
     this.chords = groupChords(this.practiced)
-    if (midi.connected) midi.applyGuideVolume()
+    if (midi.sendsGuide) midi.applyGuideVolume()
   }
 
   setMode(m: Mode) {
     this.mode = m
+    this.stats = { hits: 0, wrong: 0 }
     this.reroute()
     this.seek(this.t)
   }
@@ -115,6 +125,13 @@ export class Player {
   setSpeed(s: number) {
     this.speed = Math.max(0.25, Math.min(1.5, s))
     if (this.playing) this.seek(this.t)
+    this.emit()
+  }
+
+  setMetronome(on: boolean) {
+    this.metronome = on
+    this.beatIdx = this.beats.findIndex((b) => b >= this.t - 0.001)
+    if (this.beatIdx < 0) this.beatIdx = this.beats.length
     this.emit()
   }
 
@@ -138,6 +155,7 @@ export class Player {
   pause() {
     this.playing = false
     this.silence()
+    this.showNextChord()
     this.emit()
   }
 
@@ -150,7 +168,6 @@ export class Player {
   silence() {
     audio.stopAll()
     midi.allOff()
-    this.litChord = []
     this.waiting = false
   }
 
@@ -164,14 +181,23 @@ export class Player {
     this.chordIdx = this.chords.findIndex((c) => c[0].start >= this.t - 0.001)
     if (this.chordIdx < 0) this.chordIdx = this.chords.length
     this.chordHits.clear()
+    this.beatIdx = this.beats.findIndex((b) => b >= this.t - 0.001)
+    if (this.beatIdx < 0) this.beatIdx = this.beats.length
     this.anchor()
-    if (this.playing && midi.connected) {
-      if (this.mode === 'watch') {
-        // keys that should already be down at this point
-        for (const n of this.practiced) if (n.start < this.t && n.end > this.t) midi.lightOn(n.pitch, n.velocity, this.midiTime(this.t))
-      } else this.lightChord()
+    if (this.mode === 'watch' && this.playing) {
+      // keys that should already be down at this point
+      for (const n of this.practiced) if (n.start < this.t && n.end > this.t) midi.lightOn(n.pitch, n.velocity, n.hand)
     }
+    this.showNextChord()
     this.emit()
+  }
+
+  /** In wait mode the next chord stays lit, also while paused, so you can see where to start. */
+  private showNextChord() {
+    if (this.mode !== 'wait') return
+    const c = this.chords[this.chordIdx]
+    if (!c) return
+    for (const n of c) midi.lightOn(n.pitch, n.velocity, n.hand)
   }
 
   private anchor() {
@@ -184,21 +210,17 @@ export class Player {
     return performance.now() + Math.max(0, ((songT - this.t) / this.speed) * 1000)
   }
 
-  private lightChord() {
-    const c = this.chords[this.chordIdx]
-    if (!c || !midi.connected) return
-    for (const n of c) midi.lightOn(n.pitch, n.velocity, this.midiTime(this.t))
-    this.litChord = c
-  }
-
-  private unlightChord() {
-    for (const n of this.litChord) midi.lightOff(n.pitch, this.midiTime(this.t))
-    this.litChord = []
-  }
-
   /** The chord the learner should play next (wait mode). */
   get targets(): ArrangedNote[] {
-    return this.mode === 'wait' ? this.chords[this.chordIdx] ?? [] : []
+    return this.mode === 'wait' ? (this.chords[this.chordIdx] ?? []) : []
+  }
+
+  /** How early (song seconds) a chord may be played and still count. About one beat. */
+  private get earlyWindow() {
+    const c = this.chords[this.chordIdx]
+    const prev = this.chords[this.chordIdx - 1]
+    const gap = c && prev ? c[0].start - prev[0].start : 0.6
+    return Math.min(0.6, Math.max(0.2, gap * 0.75))
   }
 
   /** Advance the clock. Call every animation frame. */
@@ -227,7 +249,8 @@ export class Player {
     }
     this.t = t
     this.scheduleAudio(Math.min(t + LOOKAHEAD * this.speed, limit))
-    if (this.mode === 'watch') this.scheduleLights(t + (MIDI_AHEAD_MS / 1000) * this.speed)
+    this.scheduleClicks(Math.min(t + LOOKAHEAD * this.speed, limit))
+    if (this.mode === 'watch') this.scheduleLights(t + MIDI_AHEAD * this.speed)
     if (!this.loop && t >= this.duration + 0.5) {
       this.playing = false
       this.finished = true
@@ -248,43 +271,59 @@ export class Player {
     this.scheduledUntil = Math.max(this.scheduledUntil, until)
   }
 
+  private scheduleClicks(until: number) {
+    while (this.beatIdx < this.beats.length && this.beats[this.beatIdx] < until) {
+      const b = this.beats[this.beatIdx]
+      const at = this.ctxStart + (b - this.songStart) / this.speed
+      if (this.metronome && at >= audio.now - 0.02) audio.click(Math.max(at, audio.now), this.beatIdx % 4 === 0)
+      this.beatIdx++
+    }
+  }
+
   private scheduleLights(until: number) {
-    if (!midi.connected) return
+    if (!midi.sendsGuide) return
     while (this.lightIdx < this.lights.length && this.lights[this.lightIdx].t < until) {
       const e = this.lights[this.lightIdx++]
       const at = this.midiTime(e.t)
-      if (e.on) midi.lightOn(e.note, e.vel, at)
-      else midi.lightOff(e.note, at)
+      if (e.on) midi.lightOn(e.note, e.vel, e.hand, at)
+      else midi.lightOff(e.note, e.hand, at)
     }
+  }
+
+  private flash(note: number, kind: 'good' | 'bad') {
+    this.flashes.set(note, { kind, until: performance.now() + FLASH_MS })
   }
 
   /** A key pressed on the keyboard, the screen or the computer keyboard. */
   handleKey(note: number) {
-    if (this.mode !== 'wait' || !this.playing) return
+    if (this.mode !== 'wait' || this.finished) return
     const c = this.chords[this.chordIdx]
     if (!c) return
     const n = c.find((x) => x.pitch === note && !this.chordHits.has(x))
     if (!n) {
-      this.stats.wrong++
-      this.emit()
+      // a wrong key only counts while the song is actually waiting for you
+      if (this.waiting && !c.some((x) => x.pitch === note)) {
+        this.stats.wrong++
+        this.flash(note, 'bad')
+        this.emit()
+      }
       return
     }
+    // too early: ignore quietly (it's not wrong, it just isn't time yet)
+    if (this.playing && !this.waiting && c[0].start - this.t > this.earlyWindow) return
+    if (!this.playing) this.play() // pressing the first highlighted key starts the song
     this.chordHits.add(n)
     this.stats.hits++
+    this.flash(note, 'good')
     if (c.every((x) => this.chordHits.has(x))) {
-      this.unlightChord()
+      for (const x of c) midi.lightOff(x.pitch, x.hand)
       this.chordHits.clear()
-      if (this.t < c[0].start - 0.02) {
-        // played ahead of time: jump there (the song follows you)
-        this.t = c[0].start
-        audio.stopAll()
-        this.soundIdx = lowerBound(this.sound, this.t)
-        this.scheduledUntil = this.t
-      }
       this.chordIdx++
-      this.waiting = false
-      this.anchor()
-      this.lightChord()
+      if (this.waiting) {
+        this.waiting = false
+        this.anchor()
+      }
+      this.showNextChord()
     }
     this.emit()
   }
@@ -297,12 +336,12 @@ export class Player {
   }
 }
 
-export function groupChords(ns: ArrangedNote[], window = 0.035): ArrangedNote[][] {
+export function groupChords(ns: ArrangedNote[], window = CHORD_WINDOW): ArrangedNote[][] {
   const sorted = [...ns].sort((a, b) => a.start - b.start)
   const groups: ArrangedNote[][] = []
   for (const n of sorted) {
     const g = groups[groups.length - 1]
-    if (g && n.start - g[0].start <= window) g.push(n)
+    if (g && n.start - g[0].start <= window && !g.some((x) => x.pitch === n.pitch)) g.push(n)
     else groups.push([n])
   }
   return groups

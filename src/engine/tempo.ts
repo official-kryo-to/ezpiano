@@ -12,6 +12,57 @@ import type { BeatGrid, RawNote } from './types'
 
 const ENV_FPS = 100
 
+/** Tunable constants (fitted on a pop piano dev set, see README). */
+export const TEMPO_PARAMS = {
+  /** soft tempo prior: centre (BPM) and width (octaves) */
+  center: 80,
+  width: 0.7,
+  /** downbeat cue weights */
+  accent: 2,
+  harmony: 0.5,
+  start: 0.35,
+  long: 0,
+  /** shift the grid by half a beat when the off-beats carry this much more weight */
+  offbeat: 1.15,
+}
+
+/**
+ * Syncopated accompaniment can pull a beat tracker onto the off-beats. Bass notes and long notes
+ * mostly sit on the beat, so compare the grid with its half-beat-shifted copy.
+ */
+function onBeatCheck(notes: RawNote[], beats: number[]): number[] {
+  if (beats.length < 4) return beats
+  const weight = (n: RawNote) => (n.velocity / 127) * (n.pitch < 55 ? 2 : 1) * Math.min(1.5, (n.end - n.start) / 0.3)
+  const score = (grid: number[]) => {
+    let s = 0
+    let k = 0
+    for (const n of notes) {
+      while (k + 1 < grid.length && grid[k + 1] <= n.start) k++
+      const d = Math.min(Math.abs(n.start - grid[k]), k + 1 < grid.length ? Math.abs(grid[k + 1] - n.start) : Infinity)
+      if (d < 0.06) s += weight(n)
+    }
+    return s
+  }
+  const period = beats[1] - beats[0]
+  const ext = [...beats]
+  while (ext[0] > notes[0].start - period) ext.unshift(ext[0] - period)
+  beats = ext
+  const shifted = [beats[0] - period / 2, ...beats.slice(0, -1).map((b, i) => (b + beats[i + 1]) / 2)]
+  // Bass and long notes decide when the evidence is clear. Otherwise the song's first note
+  // (almost always on a beat) breaks the tie.
+  const ratio = score(shifted) / Math.max(1e-9, score(beats))
+  if (ratio > 1.4) return shifted
+  if (ratio < 1 / 1.4) return beats
+  const first = notes[0].start
+  const dist = (grid: number[]) => Math.min(...grid.map((b) => Math.abs(b - first)))
+  const half = period / 2
+  const onOrig = dist(beats) < half * 0.35
+  const onShift = dist(shifted) < half * 0.35
+  if (onShift && !onOrig) return shifted
+  if (onOrig && !onShift) return beats
+  return ratio > TEMPO_PARAMS.offbeat ? shifted : beats
+}
+
 interface OnsetEvent {
   t: number
   w: number
@@ -67,7 +118,7 @@ export function estimatePeriod(events: OnsetEvent[]): number {
   let bestScore = -1
   for (let p = 0.3; p <= 1.2; p += 0.002) {
     const bpm = 60 / p
-    const prior = Math.exp(-0.5 * (Math.log2(bpm / 110) / 0.7) ** 2)
+    const prior = Math.exp(-0.5 * (Math.log2(bpm / TEMPO_PARAMS.center) / TEMPO_PARAMS.width) ** 2)
     const score = (h(p) + 0.7 * h(2 * p) + 0.5 * h(3 * p) + 0.5 * h(4 * p) + 0.4 * h(p / 2)) * prior
     if (score > bestScore) {
       bestScore = score
@@ -162,6 +213,8 @@ export function analyzeTempo(notes: RawNote[]): BeatGrid {
     for (let t = first + period; t < last; t += period) beats.push(t)
   }
 
+  beats = onBeatCheck(notes, beats)
+
   // cover the whole piece
   const p0 = beats.length > 1 ? beats[1] - beats[0] : period
   while (beats[0] > first - 0.05) beats.unshift(beats[0] - p0)
@@ -231,12 +284,20 @@ function downbeatPhase(notes: RawNote[], events: OnsetEvent[], beats: number[], 
     const m = Math.max(...xs)
     return m > 0 ? xs.map((x) => x / m) : xs
   }
+  // long notes (held chords, melody notes) tend to start on beat 1
+  const longStarts = beats.map((b) => {
+    let s = 0
+    for (const n of notes) if (Math.abs(n.start - b) < 0.07) s += Math.min(4, n.end - n.start)
+    return s
+  })
   const acc = norm(sumBy(accent))
   const har = norm(sumBy(harmony))
+  const lng = norm(sumBy(longStarts))
+  const P = TEMPO_PARAMS
   let best = 0
   let bestScore = -1
   for (let k = 0; k < 4; k++) {
-    const score = acc[k] + 1.5 * har[k] + (firstBeat % 4 === k ? 0.35 : 0)
+    const score = P.accent * acc[k] + P.harmony * har[k] + P.long * lng[k] + (firstBeat % 4 === k ? P.start : 0)
     if (score > bestScore) {
       bestScore = score
       best = k

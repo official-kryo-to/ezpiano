@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ConvertSettings, Difficulty, EngineKind, OutputMode } from '../engine/types'
 import { Segmented, Toggle, fmtTime } from './controls'
 import { IconBack, IconMusic } from './icons'
+import { KeyboardModelSelect } from './KeyboardPanel'
 
 interface Props {
   fileName: string
@@ -95,7 +96,14 @@ export function SettingsCard({ fileName, duration, initial, instant, onBack, onC
             <div style={{ marginTop: 12 }}>
               <Toggle label="Auto-transpose to the easiest key (C major / A minor)" checked={s.autoTranspose} onChange={(v) => set('autoTranspose', v)} />
             </div>
-            <p className="field-help">Semitones. Notes outside the 61 keys are moved by octaves, never dropped.</p>
+            <p className="field-help">Semitones. Notes outside your keyboard's range are moved by octaves, never dropped.</p>
+          </div>
+        </div>
+
+        <div className="field">
+          <span className="field-label">Keyboard</span>
+          <div>
+            <KeyboardModelSelect label={false} />
           </div>
         </div>
 
@@ -129,7 +137,7 @@ export function SettingsCard({ fileName, duration, initial, instant, onBack, onC
           </div>
         )}
 
-        <div className="actions">
+        <div className="actions sticky">
           <button className="btn btn-primary btn-lg" onClick={() => onConvert(s)}>
             {instant ? 'Apply' : 'Convert'}
           </button>
