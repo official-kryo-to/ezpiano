@@ -5,16 +5,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ## [Unreleased]
 
 ### Added
-- Song search backed by the BitMIDI library with client-side re-ranking (title match, popularity, piano boost) and quick-pick chips.
-- MIDI parsing with automatic melody/piano track detection and per-bar timing.
-- Practice screen: canvas falling notes, multi-touch piano, Watch / Wait for me / Play along modes, accuracy and streak scoring, results card.
-- Parts: Easy melody (skyline extraction + octave folding), Right hand, Left hand, Both hands, with the other hand auto-played.
-- Letter-notes view (TikTok-tutorial style) with live highlighting and tap-to-seek.
-- Speed control, A/B loop, scrubber, adjustable fall speed, track picker, backing-instrument toggle.
-- MIDI file import (picker + drag and drop) and an on-device song library with favorites and best scores (IndexedDB).
-- Seven built-in public-domain songs for offline use.
-- Optional "Learn notes" section: 7 lessons with intro slides, drills, and star ratings (keyboard layout, white keys, sharps/flats, octaves, treble clef, bass clef, ear training).
-- Input from on-screen keys, computer keyboard, and Web MIDI devices.
-- Sampled grand piano (smplr) with cached samples and a synth fallback; iOS silent-switch workaround.
-- Installable PWA for Android and iOS: manifest, icons, service worker with offline caching for the app shell, MIDI files, samples and fonts.
-- GitHub Pages deploy workflow with configurable `BASE_PATH`.
+- Audio to MIDI converter: drop or pick an MP3, WAV, M4A or FLAC file and get a two-hand `.mid` built for the Yamaha EZ-220.
+- In-browser piano transcription with the ByteDance high-resolution piano model (Kong et al.), exported to a 20.8 MB int8 ONNX file by `scripts/export_model.py`, run with onnxruntime-web in a Web Worker (WebGPU when available, multi-threaded WebAssembly otherwise).
+- Spotify Basic Pitch as a lazily loaded fallback for non-piano recordings.
+- Web Audio decoding and resampling to the model rate, with chunked processing for long files.
+- Note cleanup: merges repeated fragments, drops notes under 60 ms, ghost notes and octave ghosts, trims leading silence, clamps velocity to 40 to 110.
+- Tempo and beat detection from transcribed onsets (inter-onset histogram, beat tracking, downbeat), with a tempo map for performances that drift.
+- Arranging: skyline melody for the right hand, the rest for the left, chord detection for simple left-hand chords, polyphony caps per hand.
+- Settings: Output (Melody only, Melody + simple chords, Full transcription), Difficulty (Easy, Medium, Original), Transpose -12 to +12 with auto-transpose to C major / A minor, Quantize to beat, Recording type. The last choice is remembered.
+- EZ-220 MIDI output: Type 1, "Right Hand" on channel 1 and "Left Hand" on channel 2, Acoustic Grand, every note within C2 to C7 (octave-shifted, never dropped), detected BPM and 4/4 in the header, `<name>_ez220.mid` file name.
+- Progress screen with named stages, overall progress and a time estimate; conversions can be cancelled.
+- Result and practice screen: falling notes over a 61-key keyboard (C2 to C7), play/pause, scrubber, speed 25 to 150%, A/B loop, Download .mid, and instant re-arranging without re-running the model.
+- Keyboard lights over Web MIDI: device picker with remembered choice and clear status, Watch and Wait for me modes, Right / Left / Both hands on channel 1 with the other hand played by the app, "Keyboard plays the guide notes" toggle (CC 7 = 0 for silent lights, restored to 100 on exit, with a velocity 1 alternative), note-offs plus CC 123 on pause, stop, seek and leave, and a Test lights button.
+- Reads key presses from the keyboard's MIDI output for Wait for me mode; on-screen and computer keys work too.
+- Recent list of converted songs stored in IndexedDB, with reopen, download and remove.
+- Service worker (Workbox injectManifest) that adds COOP/COEP headers on GitHub Pages so WebAssembly can use several threads, and caches the model and runtime on first use (CacheFirst, not precached).
+- New dark, glass-panel design with Inter (self-hosted), design tokens in plain CSS, visible focus states, keyboard navigation and reduced-motion support. New app icon.
+- Vitest suite that converts a bundled 8 s piano clip with the real model and checks tracks, channels, key range, polyphony, tempo and quantization.
+- Benchmark scripts (`scripts/benchmark.ts`, `scripts/benchmark_eval.py`) comparing the piano model with Basic Pitch using mir_eval.
+
+### Removed
+- BitMIDI song search and quick picks.
+- Built-in public-domain songs.
+- "Learn notes" lessons and drills.
+- Previous practice screen (letter-notes view, play-along scoring, track picker) and the old song library.
+- Google Fonts dependency (Inter is now bundled).

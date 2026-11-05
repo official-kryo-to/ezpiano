@@ -1,190 +1,194 @@
-import { useCallback, useEffect, useState } from 'react'
-import { GraduationCap, Loader2, Music, Settings as Cog } from 'lucide-react'
-import { Practice } from './screens/Practice'
-import { Songs } from './screens/Songs'
-import { SettingsScreen } from './screens/SettingsScreen'
-import { Learn } from './screens/learn/Learn'
-import { audio } from './lib/audio'
-import { loadBuiltin } from './lib/builtins'
-import { connectMidi, installComputerKeyboard, input } from './lib/input'
-import { downloadMidi, type SearchResult } from './lib/search'
-import { cleanTitle, parseMidi, type Song } from './lib/song'
-import { getSong, loadSettings, saveSong, storeSettings, updateSong, type Settings } from './lib/storage'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { buildResult, buildResultWithStages, transcribeFile, type Progress } from './engine/client'
+import { midiFileName } from './engine/midi'
+import { packNotes, unpackNotes } from './engine/transcribe'
+import type { BeatGrid, ConvertSettings, EngineKind, RawNote } from './engine/types'
+import { getRecent, loadSettings, saveRecent, saveSettings, updateRecent } from './lib/storage'
+import { installComputerKeys } from './practice/keys'
+import { useMidiStatus } from './ui/KeyboardPanel'
+import { Home } from './ui/Home'
+import { ProgressCard } from './ui/ProgressCard'
+import { ResultView } from './ui/ResultView'
+import { SettingsCard } from './ui/SettingsCard'
+import type { Result } from './engine/client'
 
-type Tab = 'songs' | 'learn' | 'settings'
-interface InstallEvent extends Event {
-  prompt: () => Promise<void>
+interface Song {
+  id: string
+  title: string
+  fileName: string
+  duration: number
+  engine: EngineKind
+  raw: RawNote[]
+  settings: ConvertSettings
+  cache?: { clean: RawNote[]; grid: BeatGrid }
 }
 
+type Screen =
+  | { kind: 'home' }
+  | { kind: 'settings'; file: File }
+  | { kind: 'rearrange'; song: Song }
+  | { kind: 'progress'; file: File; settings: ConvertSettings }
+  | { kind: 'result'; song: Song; result: Result }
+
+const titleOf = (fileName: string) => fileName.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').trim() || 'Untitled'
+
+function download(bytes: Uint8Array, name: string) {
+  const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'audio/midi' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+/** Used by main.tsx: don't auto-reload for cross-origin isolation in the middle of a conversion. */
+export const busy = { current: false }
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>('songs')
-  const [settings, setSettings] = useState<Settings>(loadSettings)
-  const [song, setSong] = useState<Song | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [screen, setScreen] = useState<Screen>({ kind: 'home' })
+  const [progress, setProgress] = useState<Progress | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [libraryVersion, setLibraryVersion] = useState(0)
-  const [installEvt, setInstallEvt] = useState<InstallEvent | null>(null)
+  const abort = useRef<AbortController | null>(null)
+  const midiStatus = useMidiStatus()
 
-  useEffect(() => installComputerKeyboard(), [])
-  useEffect(() => {
-    const unlock = () => audio.unlock()
-    window.addEventListener('pointerdown', unlock, { once: true })
-    window.addEventListener('keydown', unlock, { once: true })
-    const onInstall = (e: Event) => {
-      e.preventDefault()
-      setInstallEvt(e as InstallEvent)
-    }
-    window.addEventListener('beforeinstallprompt', onInstall)
-    return () => {
-      window.removeEventListener('pointerdown', unlock)
-      window.removeEventListener('keydown', unlock)
-      window.removeEventListener('beforeinstallprompt', onInstall)
-    }
-  }, [])
-
-  useEffect(() => {
-    storeSettings(settings)
-    audio.setVolume(settings.volume)
-    audio.setPreferSynth(settings.sound === 'synth')
-  }, [settings])
-
+  useEffect(() => installComputerKeys(), [])
   useEffect(() => {
     if (!toast) return
     const id = setTimeout(() => setToast(null), 3500)
     return () => clearTimeout(id)
   }, [toast])
 
-  // Android back button closes the practice screen instead of leaving the app
-  useEffect(() => {
-    const onPop = () => setSong(null)
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+  const showResult = useCallback((song: Song, result: Result) => {
+    setScreen({ kind: 'result', song: { ...song, cache: { clean: result.clean, grid: result.grid } }, result })
   }, [])
 
-  const open = useCallback((s: Song) => {
-    void connectMidi()
-    history.pushState({ practice: true }, '')
-    setSong(s)
-  }, [])
-
-  const close = () => {
-    input.releaseAll()
-    if (history.state?.practice) history.back()
-    else setSong(null)
-    setLibraryVersion((v) => v + 1)
-  }
-
-  const withBusy = async (label: string, fn: () => Promise<void>) => {
-    setBusy(label)
+  const convert = async (file: File, settings: ConvertSettings) => {
+    saveSettings(settings)
+    setError(null)
+    setProgress(null)
+    setScreen({ kind: 'progress', file, settings })
+    const ac = new AbortController()
+    abort.current = ac
+    busy.current = true
     try {
-      await fn()
+      const tr = await transcribeFile(file, settings.engine, setProgress, ac.signal)
+      if (!tr.raw.length) throw new Error('No notes were found in this recording.')
+      const title = titleOf(file.name)
+      const result = await buildResultWithStages(tr.raw, settings, title, setProgress)
+      const song: Song = { id: `${Date.now()}`, title, fileName: file.name, duration: tr.duration, engine: settings.engine, raw: tr.raw, settings }
+      await saveRecent({
+        id: song.id,
+        title,
+        fileName: file.name,
+        createdAt: Date.now(),
+        duration: tr.duration,
+        engine: settings.engine,
+        settings,
+        notes: packNotes(tr.raw),
+        bpm: result.grid.bpm,
+        noteCount: result.arrangement.notes.length,
+      }).catch(() => setToast('Could not save to Recent (storage is full or blocked).'))
+      showResult(song, result)
     } catch (e) {
-      setToast(e instanceof Error ? e.message : 'Something went wrong')
+      if ((e as Error).name === 'AbortError') return
+      setError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
-      setBusy(null)
+      busy.current = false
+      abort.current = null
     }
   }
 
-  const openResult = (r: SearchResult) =>
-    withBusy(`Getting “${r.title}”…`, async () => {
-      const id = `bitmidi:${r.id}`
-      const cached = await getSong(id)
-      const bytes = cached?.bytes ?? (await downloadMidi(r.downloadUrl))
-      const s = parseMidi(bytes, id, r.title, 'bitmidi')
-      await saveSong({ id, title: r.title, source: 'bitmidi', bytes })
-      open(s)
-    })
-
-  const openSaved = (id: string) =>
-    withBusy('Opening…', async () => {
-      const saved = await getSong(id)
-      if (!saved) throw new Error('Song not found')
-      const s = parseMidi(saved.bytes, id, saved.title, saved.source)
-      await saveSong({ id, title: saved.title, source: saved.source, bytes: saved.bytes })
-      open(s)
-    })
-
-  const openImport = (file: File) =>
-    withBusy(`Reading ${file.name}…`, async () => {
-      const bytes = await file.arrayBuffer()
-      const id = `import:${file.name}:${file.size}`
-      const title = cleanTitle(file.name)
-      const s = parseMidi(bytes, id, title, 'import')
-      await saveSong({ id, title, source: 'import', bytes })
-      open(s)
-    })
-
-  const openBuiltin = (id: string) => open(loadBuiltin(id))
-
-  const onResult = (acc: number) => {
-    if (!song || song.source === 'builtin') return
-    void getSong(song.id).then((s) => {
-      if (s && (s.best ?? -1) < acc) void updateSong(song.id, { best: acc })
-    })
+  const openRecent = async (id: string) => {
+    const r = await getRecent(id)
+    if (!r) return setToast('That song is no longer saved.')
+    const song: Song = { id: r.id, title: r.title, fileName: r.fileName, duration: r.duration, engine: r.engine, raw: unpackNotes(r.notes), settings: r.settings }
+    showResult(song, buildResult(song.raw, song.settings, song.title))
   }
+
+  const downloadRecent = async (id: string) => {
+    const r = await getRecent(id)
+    if (!r) return
+    download(buildResult(unpackNotes(r.notes), r.settings, r.title).midi, midiFileName(r.fileName))
+  }
+
+  const engineLabel = (e: EngineKind) => (e === 'piano' ? 'Piano model' : 'Basic Pitch')
 
   return (
     <div className="app">
-      <div className="aurora" aria-hidden />
-      {song ? (
-        <Practice song={song} settings={settings} onSettings={setSettings} onClose={close} onResult={onResult} />
-      ) : (
-        <>
-          <main className="main">
-            <header className="brand">
-              <div className="logo">
-                <span className="logo-mark" aria-hidden>
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                ezpiano
-              </div>
-            </header>
-            {tab === 'songs' && (
-              <Songs
-                onOpenResult={openResult}
-                onOpenBuiltin={openBuiltin}
-                onOpenSaved={openSaved}
-                onImport={openImport}
-                libraryVersion={libraryVersion}
-              />
-            )}
-            {tab === 'learn' && <Learn settings={settings} />}
-            {tab === 'settings' && (
-              <SettingsScreen
-                settings={settings}
-                onChange={setSettings}
-                canInstall={!!installEvt}
-                onInstall={() => installEvt?.prompt().then(() => setInstallEvt(null))}
-              />
-            )}
-          </main>
-          <nav className="tabbar glass" aria-label="Main">
-            <button className={tab === 'songs' ? 'on' : ''} onClick={() => setTab('songs')}>
-              <Music size={22} />
-              <span>Songs</span>
-            </button>
-            <button className={tab === 'learn' ? 'on' : ''} onClick={() => setTab('learn')}>
-              <GraduationCap size={22} />
-              <span>Learn notes</span>
-            </button>
-            <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>
-              <Cog size={22} />
-              <span>Settings</span>
-            </button>
-          </nav>
-        </>
+      <header className="topbar">
+        <div className="brand">
+          ezpiano <small>for Yamaha EZ-220</small>
+        </div>
+        {midiStatus.supported && (
+          <span className="status-pill" aria-live="polite">
+            <span className={`dot ${midiStatus.output ? 'ok' : ''}`} />
+            {midiStatus.output ? midiStatus.output.name : 'Keyboard not connected'}
+          </span>
+        )}
+      </header>
+
+      {screen.kind === 'home' && <Home onFile={(file) => setScreen({ kind: 'settings', file })} onOpen={openRecent} onDownload={downloadRecent} />}
+
+      {screen.kind === 'settings' && (
+        <SettingsCard
+          fileName={screen.file.name}
+          initial={loadSettings()}
+          instant={false}
+          onBack={() => setScreen({ kind: 'home' })}
+          onConvert={(s) => convert(screen.file, s)}
+        />
       )}
-      {busy && (
-        <div className="busy">
-          <div className="card glass">
-            <Loader2 className="spin" size={26} />
-            <p>{busy}</p>
-          </div>
+
+      {screen.kind === 'rearrange' && (
+        <SettingsCard
+          fileName={screen.song.fileName}
+          duration={screen.song.duration}
+          initial={screen.song.settings}
+          instant
+          onBack={() => showResult(screen.song, buildResult(screen.song.raw, screen.song.settings, screen.song.title, screen.song.cache))}
+          onConvert={(s) => {
+            const settings = { ...s, engine: screen.song.engine }
+            saveSettings(settings)
+            const song = { ...screen.song, settings }
+            void updateRecent(song.id, { settings })
+            showResult(song, buildResult(song.raw, settings, song.title, song.cache))
+          }}
+        />
+      )}
+
+      {screen.kind === 'progress' && (
+        <ProgressCard
+          fileName={screen.file.name}
+          progress={progress}
+          engine={screen.settings.engine}
+          error={error}
+          onCancel={() => {
+            abort.current?.abort()
+            setScreen(error ? { kind: 'settings', file: screen.file } : { kind: 'home' })
+          }}
+        />
+      )}
+
+      {screen.kind === 'result' && (
+        <ResultView
+          key={screen.song.id + JSON.stringify(screen.song.settings)}
+          title={screen.song.title}
+          arrangement={screen.result.arrangement}
+          engineLabel={engineLabel(screen.song.engine)}
+          onBack={() => setScreen({ kind: 'home' })}
+          onEdit={() => setScreen({ kind: 'rearrange', song: screen.song })}
+          onDownload={() => download(screen.result.midi, midiFileName(screen.song.fileName))}
+        />
+      )}
+
+      {toast && (
+        <div className="toast" role="status">
+          {toast}
         </div>
       )}
-      {toast && <div className="toast glass">{toast}</div>}
     </div>
   )
 }
