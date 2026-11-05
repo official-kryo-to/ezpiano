@@ -24,8 +24,8 @@ async function render(size, out, { pad = 0, bg = 'transparent' } = {}) {
 await render(192, 'pwa-192.png')
 await render(512, 'pwa-512.png')
 // maskable: keep art inside the safe zone on a solid background
-await render(512, 'pwa-maskable-512.png', { pad: 56, bg: '#070812' })
+await render(512, 'pwa-maskable-512.png', { pad: 56, bg: '#0c0d10' })
 // iOS ignores transparency, so fill it
-await render(180, 'apple-touch-icon.png', { bg: '#070812' })
+await render(180, 'apple-touch-icon.png', { bg: '#0c0d10' })
 await browser.close()
 console.log('icons written')

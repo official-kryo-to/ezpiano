@@ -4,3 +4,7 @@ dev-dist
 *.log
 .DS_Store
 .vite
+.venv
+__pycache__
+*.pth
+*.fp32.onnx
