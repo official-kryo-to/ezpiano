@@ -5,6 +5,7 @@ export const MIN_NOTE_SECONDS = 0.06
 /**
  * Light cleanup of raw transcription:
  *  - merge repeated fragments of the same key (double detections, a held note split in two)
+ *  - merge echoes from delay effects back into the played note
  *  - drop notes shorter than ~60 ms when they are also weak (otherwise lengthen them to 60 ms)
  *  - drop ghost notes: very quiet, or much quieter than what is playing around them
  */
@@ -34,7 +35,7 @@ export function cleanNotes(input: RawNote[]): RawNote[] {
       }
       out.push(n)
     }
-    merged = merged.concat(out)
+    merged = merged.concat(removeEchoes(out))
   }
 
   merged.sort((a, b) => a.start - b.start || a.pitch - b.pitch)
@@ -77,6 +78,59 @@ export function cleanNotes(input: RawNote[]): RawNote[] {
     return n.velocity >= median * 0.35
   })
   return kept
+}
+
+/** Tunable echo detection (see removeEchoes). */
+export const ECHO = {
+  /** max gap (s) between repeats of an echo chain */
+  maxGap: 0.6,
+  /** each repeat must be at most this loud relative to the previous one */
+  decay: 0.85,
+  /** a lone repeat counts as an echo when this much quieter and this close */
+  loneRatio: 0.7,
+  loneGap: 0.4,
+  /** repeats in a chain must be evenly spaced within this fraction */
+  spacing: 0.3,
+}
+
+/**
+ * Delay/echo effects (common in ambient and lo-fi piano covers) make the model hear every
+ * repeat as a new key press: the same key again and again at a steady spacing, quieter each
+ * time. Merge those repeats back into the note that was actually played. Real repeated notes
+ * keep their loudness or break the spacing, so they stay.
+ */
+export function removeEchoes(list: RawNote[]): RawNote[] {
+  const out: RawNote[] = []
+  let i = 0
+  while (i < list.length) {
+    const head = list[i]
+    let j = i + 1
+    let prev = head
+    let gap0 = 0
+    let chain = 0
+    while (j < list.length) {
+      const n = list[j]
+      const gap = n.start - prev.start
+      if (gap > ECHO.maxGap || n.velocity > prev.velocity * ECHO.decay) break
+      if (chain === 0) {
+        gap0 = gap
+      } else if (Math.abs(gap - gap0) > gap0 * ECHO.spacing) break
+      chain++
+      prev = n
+      j++
+    }
+    // a chain of two or more decaying, evenly spaced repeats; or one clearly quieter repeat right after
+    const lone = chain === 1 && list[i + 1].start - head.start < ECHO.loneGap && list[i + 1].velocity < head.velocity * ECHO.loneRatio
+    if (chain >= 2 || lone) {
+      head.end = Math.max(head.end, list[j - 1].end)
+      out.push(head)
+      i = j
+    } else {
+      out.push(head)
+      i++
+    }
+  }
+  return out
 }
 
 export function lowerBound(arr: number[], x: number): number {

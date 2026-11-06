@@ -18,7 +18,7 @@ installable PWA.
 1. Open the site and drop an audio file (MP3, WAV, M4A or FLAC), or choose one.
 2. Pick the settings and press **Convert**:
    - **Output**: Melody only / Melody + simple chords (default) / Full transcription
-   - **Difficulty**:
+   - **Difficulty** (default Easy):
      - *Easy*: one right-hand note at a time, left hand plays chord roots or two-note shapes on beat 1, quantized to 1/8
      - *Medium*: up to 3 notes per hand, quantized to 1/16
      - *Original*: light cleanup only
@@ -28,8 +28,11 @@ installable PWA.
    - **Recording**: Piano (default) or Other instruments (uses Basic Pitch)
 3. Watch the progress (named stages and a time estimate).
 4. On the result screen, preview with falling notes, change speed, loop a section, turn on the metronome, and
-   press **Download .mid**. **Arrangement** changes output, difficulty and transpose afterwards in milliseconds,
-   because the raw transcription is kept.
+   press **Download .mid**. Difficulty and output can be switched right there (and transpose under
+   **Arrangement**). That takes milliseconds, because the raw transcription is kept.
+
+   If a result feels like too much at once, use **Easy** with **Chords**: one tune note at a time and one chord per
+   bar. **Full** keeps every note the model heard, which is useful as a reference but busy to learn from.
 5. Converted songs are saved on the device (IndexedDB) under **Recent**.
 
 Your last settings and keyboard are remembered.
@@ -107,7 +110,8 @@ audio file
   -> Web Worker: onnxruntime-web (WebGPU if available, else multi-threaded WebAssembly)
        piano model on 10 s windows, 7.5 s apart, stitched -> onset/offset/frame/velocity rolls (100 fps)
        -> notes (port of the reference post-processing)
-  -> cleanup: merge repeated fragments, drop ghost and octave-ghost notes, give short staccato notes a playable length
+  -> cleanup: merge repeated fragments and delay-effect echoes, drop ghost and octave-ghost notes,
+     give short staccato notes a playable length
   -> tempo: inter-onset-interval histogram + dynamic-programming beat tracker, on-beat check, downbeat (bass, accents, harmony)
   -> key: Temperley profiles for the key signature, Albrecht-Shanahan for major vs minor
   -> hands: melody by dynamic programming (loudness, contour, top of chord) = right hand, the rest = left hand,

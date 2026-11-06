@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { keyName } from '../engine/arrange'
-import type { Arrangement } from '../engine/types'
+import type { ArrangeSettings, Arrangement, Difficulty, OutputMode } from '../engine/types'
 import { audio } from '../lib/audio'
 import { midi } from '../lib/midi'
 import { keys } from '../practice/keys'
@@ -19,9 +19,12 @@ interface Props {
   onBack: () => void
   onDownload: () => void
   onEdit: () => void
+  settings: ArrangeSettings
+  /** instant re-arrange from the practice screen */
+  onArrange: (patch: Partial<ArrangeSettings>) => void
 }
 
-export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit }: Props) {
+export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit, settings, onArrange }: Props) {
   const player = useMemo(() => new Player(), [])
   const [, force] = useState(0)
   const [marks, setMarks] = useState<KeyMarks>({ hand: new Map(), target: new Map(), flash: new Map() })
@@ -206,6 +209,43 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
       </div>
 
       <aside className="side" aria-label="Practice settings">
+        <section className="panel glass" aria-labelledby="ar-h">
+          <h3 id="ar-h">Arrangement</h3>
+          <div className="ctl">
+            <span className="ctl-label">Difficulty</span>
+            <Segmented<Difficulty>
+              label="Difficulty"
+              full
+              value={settings.difficulty}
+              onChange={(d) => onArrange({ difficulty: d })}
+              options={[
+                { value: 'easy', label: 'Easy' },
+                { value: 'medium', label: 'Medium' },
+                { value: 'original', label: 'Original' },
+              ]}
+            />
+          </div>
+          <div className="ctl">
+            <span className="ctl-label">Output</span>
+            <Segmented<OutputMode>
+              label="Output"
+              full
+              value={settings.output}
+              onChange={(o) => onArrange({ output: o })}
+              options={[
+                { value: 'melody', label: 'Melody' },
+                { value: 'chords', label: 'Chords' },
+                { value: 'full', label: 'Full' },
+              ]}
+            />
+          </div>
+          {(settings.output === 'full' || settings.difficulty === 'original') && (
+            <p className="kb-note" style={{ marginTop: 8 }}>
+              Too much going on? Easy with Chords gives one tune note at a time and one chord per bar.
+            </p>
+          )}
+        </section>
+
         <section className="panel glass" aria-labelledby="pr-h">
           <h3 id="pr-h">Practice</h3>
           <div className="ctl">

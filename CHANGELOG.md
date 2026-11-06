@@ -28,6 +28,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Note names on falling notes and on the keys to press, red and green key feedback in Wait for me.
 - Automatic reconnect to a keyboard that was allowed before.
 - Loudness check before transcription: mastered covers louder than -20 dBFS are turned down to the training level of the model.
+- Echo removal in cleanup: delay effects (common in ambient and lo-fi covers) made every echo a new key press; evenly spaced, fading repeats of a key are now merged into the note that was played.
+- Arrangement controls (difficulty and output) on the practice screen that re-arrange instantly, with a hint when an arrangement is busy.
 - Dev-set tooling in `scripts/devset/` (POP909 excerpts rendered as piano covers) and tests for keyboard profiles, ranges, channels and melody quality.
 
 ### Changed
@@ -36,6 +38,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Tempo prior moved to 80 BPM, downbeats weighted towards accented and bass notes, and a half-beat check keeps syncopated songs on the beat.
 - Wait for me: notes of both hands that land together are one chord, playing a little early counts without the song jumping ahead, the next chord stays lit while paused and pressing it starts the song, wrong keys only count while the song is waiting.
 - New app icon.
+- Easy is now the default difficulty, and Full transcription is described as a busy reference rather than something to learn from.
 - Settings: the Convert button stays visible while scrolling; the header shows the detected keyboard and connects on click.
 
 ### Fixed

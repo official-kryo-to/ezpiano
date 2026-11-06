@@ -203,13 +203,22 @@ export default function App() {
 
       {screen.kind === 'result' && (
         <ResultView
-          key={screen.song.id + JSON.stringify(screen.song.settings)}
+          key={screen.song.id}
           title={screen.song.title}
           arrangement={screen.result.arrangement}
           engineLabel={engineLabel(screen.song.engine)}
           onBack={() => setScreen({ kind: 'home' })}
           onEdit={() => setScreen({ kind: 'rearrange', song: screen.song })}
           onDownload={() => download(screen.result.midi, midiFileName(screen.song.fileName, profile.short))}
+          settings={screen.song.settings}
+          onArrange={(patch) => {
+            const settings = fit({ ...screen.song.settings, ...patch })
+            saveSettings(settings)
+            const song = { ...screen.song, settings }
+            const result = buildResult(song.raw, settings, song.title, song.cache, profile.file)
+            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.grid.bpm })
+            showResult(song, result)
+          }}
         />
       )}
 

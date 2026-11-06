@@ -39,7 +39,7 @@ export interface ConvertSettings extends ArrangeSettings {
 
 export const DEFAULT_SETTINGS: ConvertSettings = {
   output: 'chords',
-  difficulty: 'medium',
+  difficulty: 'easy',
   transpose: 0,
   autoTranspose: false,
   quantize: true,

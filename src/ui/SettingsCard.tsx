@@ -23,7 +23,7 @@ const DIFFICULTY_HELP: Record<Difficulty, string> = {
 const OUTPUT_HELP: Record<OutputMode, string> = {
   melody: 'Just the tune, in the right hand.',
   chords: 'The tune in the right hand, simple chords in the left.',
-  full: 'Everything the model heard, split between your hands.',
+  full: 'Everything the model heard, split between your hands. Busy: best as a reference, not for learning.',
 }
 
 export function SettingsCard({ fileName, duration, initial, instant, onBack, onConvert }: Props) {
