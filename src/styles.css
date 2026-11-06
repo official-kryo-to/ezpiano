@@ -1215,3 +1215,116 @@ select {
   font-size: var(--fs-sm);
   color: var(--text-3);
 }
+
+/* ---------- other ways in ---------- */
+.ways {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--s2);
+}
+
+.way {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--s3);
+}
+
+.way strong {
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+
+.way .btn {
+  align-self: flex-start;
+}
+
+.find {
+  display: flex;
+  gap: var(--s1);
+}
+
+.find input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--r);
+  border: 1px solid var(--line-strong);
+  background: rgba(0, 0, 0, 0.3);
+  outline: none;
+  transition: border-color var(--t-fast) var(--ease);
+}
+
+.find input:focus {
+  border-color: var(--rh);
+}
+
+.recorder .rec-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.rec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--err);
+  animation: pulse 1.2s var(--ease) infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.rec-time {
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.meter {
+  flex: 1;
+  height: 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.meter > div {
+  height: 100%;
+  background: var(--ok);
+  transition: width 80ms linear;
+}
+
+.title-btn {
+  font: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--r-sm);
+  padding: 0 4px;
+  margin-left: -4px;
+  cursor: text;
+}
+
+.title-btn:hover {
+  background: var(--panel-hover);
+}
+
+.title-input {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--rh);
+  background: rgba(0, 0, 0, 0.3);
+  outline: none;
+}

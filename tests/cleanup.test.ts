@@ -27,3 +27,15 @@ describe('echo removal', () => {
     expect(cleanNotes(fast)).toHaveLength(16)
   })
 })
+
+describe('speed: silent windows', () => {
+  it('detects near-silence and nothing else', async () => {
+    const { isSilent } = await import('../src/engine/transcribe')
+    expect(isSilent(new Float32Array(160000))).toBe(true)
+    const quietNoise = new Float32Array(160000).map(() => (Math.random() - 0.5) * 0.0015)
+    expect(isSilent(quietNoise)).toBe(true)
+    const music = new Float32Array(160000)
+    music[80000] = 0.05
+    expect(isSilent(music)).toBe(false)
+  })
+})

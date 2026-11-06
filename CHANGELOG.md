@@ -30,6 +30,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Loudness check before transcription: mastered covers louder than -20 dBFS are turned down to the training level of the model.
 - Echo removal in cleanup: delay effects (common in ambient and lo-fi covers) made every echo a new key press; evenly spaced, fading repeats of a key are now merged into the note that was played.
 - Arrangement controls (difficulty and output) on the practice screen that re-arrange instantly, with a hint when an arrangement is busy.
+- Listen to a browser tab (search for a song, play it in another tab, ezpiano records the tab's sound) and record from the microphone, both straight into the converter.
+- Android share target ("Share to ezpiano") and desktop file handling for the installed app.
+- Rename songs by clicking the title; downloads use the new name.
+- Faster start: the model and runtime load and the audio decodes while the settings are open; silent windows skip the model; up to 8 threads on machines with more cores.
+- The app checks for updates every 30 minutes while open.
 - Dev-set tooling in `scripts/devset/` (POP909 excerpts rendered as piano covers) and tests for keyboard profiles, ranges, channels and melody quality.
 
 ### Changed

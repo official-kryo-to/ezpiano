@@ -32,6 +32,26 @@ registerRoute(new NavigationRoute(async (opts) => isolate(await shell(opts))))
 
 const sameOrigin = (url: URL) => url.origin === self.location.origin
 
+// Android share target: keep the shared file for the page, then open the app
+const SHARE_CACHE = 'ezpiano-share'
+registerRoute(
+  ({ url, request }) => request.method === 'POST' && sameOrigin(url) && url.pathname.endsWith('/share-target'),
+  async ({ request }) => {
+    try {
+      const form = await request.formData()
+      const file = form.getAll('audio').find((f): f is File => f instanceof File)
+      if (file) {
+        const cache = await caches.open(SHARE_CACHE)
+        await cache.put('shared-file', new Response(file, { headers: { 'content-type': file.type || 'audio/mpeg', 'x-name': encodeURIComponent(file.name) } }))
+      }
+    } catch {
+      /* fall through to the app */
+    }
+    return Response.redirect(`${self.registration.scope}?shared=1`, 303)
+  },
+  'POST',
+)
+
 // big files: the models and the ONNX runtime WebAssembly
 registerRoute(
   ({ url }) => sameOrigin(url) && (/\/models\//.test(url.pathname) || url.pathname.endsWith('.wasm')),

@@ -4,7 +4,13 @@ import { registerSW } from 'virtual:pwa-register'
 import App, { busy } from './App'
 import './styles.css'
 
-registerSW({ immediate: true })
+registerSW({
+  immediate: true,
+  // check for a new version every 30 minutes while the app is open (it then updates itself)
+  onRegisteredSW(_url, reg) {
+    if (reg) setInterval(() => void reg.update().catch(() => {}), 30 * 60 * 1000)
+  },
+})
 
 // The service worker makes the page cross-origin isolated (faster, multi-threaded conversion).
 // It only applies to pages it serves, so reload once when it first takes control.

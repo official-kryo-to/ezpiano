@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { buildResult, buildResultWithStages, transcribeFile, type Progress } from './engine/client'
+import { buildResult, buildResultWithStages, prewarm, transcribeFile, type Progress } from './engine/client'
 import { midiFileName } from './engine/midi'
 import { packNotes, unpackNotes } from './engine/transcribe'
 import type { BeatGrid, ConvertSettings, EngineKind, RawNote } from './engine/types'
@@ -56,8 +56,33 @@ export default function App() {
   const midiStatus = useMidiStatus()
 
   useEffect(() => installComputerKeys(), [])
+  // load the model and decode the file while the user is choosing settings
+  useEffect(() => {
+    if (screen.kind === 'settings') prewarm(screen.file, loadSettings().engine)
+  }, [screen])
   useEffect(() => {
     void midi.reconnectIfAllowed()
+  }, [])
+
+  // files shared from another app (Android) or opened with the installed app (desktop)
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has('shared') && 'caches' in window) {
+      history.replaceState(null, '', location.pathname)
+      void (async () => {
+        const cache = await caches.open('ezpiano-share')
+        const res = await cache.match('shared-file')
+        if (!res) return
+        await cache.delete('shared-file')
+        const name = decodeURIComponent(res.headers.get('x-name') ?? 'Shared audio')
+        const blob = await res.blob()
+        setScreen({ kind: 'settings', file: new File([blob], name, { type: blob.type }) })
+      })()
+    }
+    const lq = (window as unknown as { launchQueue?: { setConsumer(fn: (p: { files?: { getFile(): Promise<File> }[] }) => void): void } }).launchQueue
+    lq?.setConsumer(async (params) => {
+      const handle = params.files?.[0]
+      if (handle) setScreen({ kind: 'settings', file: await handle.getFile() })
+    })
   }, [])
   useEffect(() => {
     if (!toast) return
@@ -134,7 +159,7 @@ export default function App() {
   const downloadRecent = async (id: string) => {
     const r = await getRecent(id)
     if (!r) return
-    download(buildResult(unpackNotes(r.notes), fit(r.settings), r.title, undefined, profile.file).midi, midiFileName(r.fileName, profile.short))
+    download(buildResult(unpackNotes(r.notes), fit(r.settings), r.title, undefined, profile.file).midi, midiFileName(`${r.title}.mid`, profile.short))
   }
 
   const engineLabel = (e: EngineKind) => (e === 'piano' ? 'Piano model' : 'Basic Pitch')
@@ -209,7 +234,12 @@ export default function App() {
           engineLabel={engineLabel(screen.song.engine)}
           onBack={() => setScreen({ kind: 'home' })}
           onEdit={() => setScreen({ kind: 'rearrange', song: screen.song })}
-          onDownload={() => download(screen.result.midi, midiFileName(screen.song.fileName, profile.short))}
+          onDownload={() => download(screen.result.midi, midiFileName(`${screen.song.title}.mid`, profile.short))}
+          onRename={(title) => {
+            const song = { ...screen.song, title }
+            void updateRecent(song.id, { title })
+            showResult(song, buildResult(song.raw, song.settings, title, song.cache, profile.file))
+          }}
           settings={screen.song.settings}
           onArrange={(patch) => {
             const settings = fit({ ...screen.song.settings, ...patch })

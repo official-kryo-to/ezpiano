@@ -43,6 +43,36 @@ export interface Transcription {
   backend: string
 }
 
+/* ---------- warm-up while the user picks settings ---------- */
+
+let warmWorker: Worker | null = null
+let warmDecode: { file: Blob; rate: number; promise: Promise<{ audio: Float32Array; duration: number }> } | null = null
+
+const newWorker = () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+
+/** Start loading the runtime + model and decoding the file before Convert is pressed. */
+export function prewarm(file: Blob, engine: EngineKind) {
+  const rate = engine === 'piano' ? SAMPLE_RATE : BASIC_PITCH_RATE
+  if (!warmDecode || warmDecode.file !== file || warmDecode.rate !== rate) {
+    const promise = decodeAudio(file, rate)
+    promise.catch(() => {}) // reported again on Convert
+    warmDecode = { file, rate, promise }
+  }
+  if (engine === 'piano' && !warmWorker) {
+    warmWorker = newWorker()
+    warmWorker.postMessage({ type: 'warmup', modelUrl: asset('models/kong-piano-int8.onnx') } satisfies WorkerRequest)
+  }
+}
+
+function takeDecode(file: Blob, rate: number) {
+  if (warmDecode && warmDecode.file === file && warmDecode.rate === rate) {
+    const p = warmDecode.promise
+    warmDecode = null
+    return p
+  }
+  return decodeAudio(file, rate)
+}
+
 /** Decode + run the model in a worker. Abort with the signal (terminates the worker). */
 export function transcribeFile(
   file: Blob,
@@ -63,12 +93,14 @@ export function transcribeFile(
     ;(async () => {
       onProgress({ stage: 'decode', fraction: 0 })
       const rate = engine === 'piano' ? SAMPLE_RATE : BASIC_PITCH_RATE
-      const { audio, duration } = await decodeAudio(file, rate)
+      const { audio, duration } = await takeDecode(file, rate)
       if (signal?.aborted) return
       if (duration < 0.5) throw new Error('This file is too short to transcribe.')
       onProgress({ stage: 'decode', fraction: 1 })
 
-      worker = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
+      worker = engine === 'piano' && warmWorker ? warmWorker : newWorker()
+      if (engine !== 'piano') warmWorker?.terminate() // the piano model was warmed up for nothing
+      warmWorker = null
       let started = 0
       let firstDone = 0
       worker.onmessage = (ev: MessageEvent<WorkerMessage>) => {

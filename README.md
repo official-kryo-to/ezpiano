@@ -15,7 +15,15 @@ installable PWA.
 
 ## How to use it
 
-1. Open the site and drop an audio file (MP3, WAV, M4A or FLAC), or choose one.
+1. Open the site and drop an audio file (MP3, WAV, M4A, FLAC or a recording), or choose one. No file?
+   - **Find a song and let ezpiano listen** (Chrome / Edge on a computer): search opens in a new tab; play
+     the video there, press **Listen to a tab**, pick that tab and turn on "Also share tab audio".
+   - **Record with the microphone**: play the song on a speaker nearby, or play it yourself.
+   - **Share from another app** (Android, installed app): Share → ezpiano on any audio file. On a computer,
+     the installed app can open audio files directly ("Open with").
+
+   ezpiano does not download from YouTube or other sites: a static site can't, and their terms don't allow it.
+   Listening to a tab records what plays, in real time, on your device only.
 2. Pick the settings and press **Convert**:
    - **Output**: Melody only / Melody + simple chords (default) / Full transcription
    - **Difficulty** (default Easy):
@@ -33,7 +41,7 @@ installable PWA.
 
    If a result feels like too much at once, use **Easy** with **Chords**: one tune note at a time and one chord per
    bar. **Full** keeps every note the model heard, which is useful as a reference but busy to learn from.
-5. Converted songs are saved on the device (IndexedDB) under **Recent**.
+5. Converted songs are saved on the device (IndexedDB) under **Recent**. Click a song's title to rename it.
 
 Your last settings and keyboard are remembered.
 
@@ -206,6 +214,18 @@ onset+offset F1 (reference offsets extended by the sustain pedal). Three 20 to 3
 - **Caveats:** the piano model was trained on MAESTRO's train split, so MAESTRO test pieces are in-domain for it
   and phone recordings will score lower. On the sampled piano its errors are mostly octave "ghost" notes; the
   cleanup and melody extraction filter those out.
+
+**Speed tricks that don't cost accuracy:**
+- **Warm-up:** the runtime and the model load, and the audio decodes, while you are still on the settings
+  screen.
+- **Silence skip:** silent stretches skip the model.
+- **More threads:** machines with more than 4 cores use up to 8 threads.
+
+Tried and rejected because they cost accuracy:
+- **Full int8 activations:** 1.7x faster, but note F1 after cleanup on real recordings fell from 0.973 to 0.941.
+- **Windows 8.5 s apart:** melody F1 on cover audio fell from 0.656 to 0.645.
+
+Batching windows and parallel branch execution gave no speed-up in WebAssembly.
 
 **Speed:** about 5 s of compute per 10 s window on 4 CPU threads (WebAssembly; measured in Node). That is roughly
 2 to 3 minutes for a 3-minute song on a laptop. Without cross-origin isolation (first visit, Safari) it runs

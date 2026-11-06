@@ -3,6 +3,7 @@ import { ACCEPTED } from '../engine/decode'
 import { deleteRecent, listRecent, type RecentMeta } from '../lib/storage'
 import { fmtTime } from './controls'
 import { IconDownload, IconTrash, IconUpload } from './icons'
+import { Recorder, canCaptureTab, canRecordMic, type RecordSource } from './Recorder'
 
 interface Props {
   onFile: (f: File) => void
@@ -16,6 +17,8 @@ export function Home({ onFile, onOpen, onDownload }: Props) {
   const [over, setOver] = useState(false)
   const [recent, setRecent] = useState<RecentMeta[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [recording, setRecording] = useState<RecordSource | null>(null)
+  const [query, setQuery] = useState('')
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -40,6 +43,9 @@ export function Home({ onFile, onOpen, onDownload }: Props) {
         <p className="supports">Key lights: Yamaha EZ-220, EZ-200, EZ-300, EZ-310 and Casio LK series. Any USB MIDI keyboard works for Wait for me.</p>
       </section>
 
+      {recording ? (
+        <Recorder source={recording} onDone={onFile} onCancel={() => setRecording(null)} />
+      ) : (
       <section
         className={`drop glass ${over ? 'over' : ''}`}
         onDragEnter={(e) => {
@@ -71,6 +77,51 @@ export function Home({ onFile, onOpen, onDownload }: Props) {
         }} />
         {error && <p className="notice err" role="alert">{error}</p>}
       </section>
+      )}
+
+      {!recording && (canCaptureTab() || canRecordMic()) && (
+        <section aria-labelledby="more-h">
+          <div className="section-title">
+            <span id="more-h">No file?</span>
+          </div>
+          <div className="ways">
+            {canCaptureTab() && (
+              <div className="way glass">
+                <strong>Find a song and let ezpiano listen</strong>
+                <p className="muted">Search opens in a new tab. Start the video there, come back, press Listen and pick that tab.</p>
+                <form
+                  className="find"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    if (!query.trim()) return
+                    window.open(`https://www.youtube.com/results?search_query=${encodeURIComponent(`${query.trim()} piano`)}`, '_blank', 'noopener')
+                  }}
+                >
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Song name" aria-label="Song to search for" />
+                  <button className="btn btn-secondary" type="submit" disabled={!query.trim()}>
+                    Search
+                  </button>
+                </form>
+                <button className="btn btn-primary" onClick={() => setRecording('tab')}>
+                  Listen to a tab
+                </button>
+              </div>
+            )}
+            {canRecordMic() && (
+              <div className="way glass">
+                <strong>Record with the microphone</strong>
+                <p className="muted">Play the song on a speaker nearby, or play it yourself.</p>
+                <button className="btn btn-secondary" onClick={() => setRecording('mic')}>
+                  Start recording
+                </button>
+              </div>
+            )}
+          </div>
+          <p className="faint" style={{ fontSize: 13, marginTop: 8 }}>
+            Recording takes as long as the song. Only record music you're allowed to use; everything stays on this device.
+          </p>
+        </section>
+      )}
 
       <section aria-labelledby="recent-h">
         <div className="section-title">

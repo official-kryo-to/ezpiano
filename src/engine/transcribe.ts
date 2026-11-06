@@ -1,4 +1,4 @@
-import { RollStitcher, rollsToNotes, segmentStarts, sliceSegment } from './kong'
+import { KEYS, RollStitcher, SEGMENT_FRAMES, rollsToNotes, segmentStarts, sliceSegment } from './kong'
 import { prepareAudio, type PreprocessMode } from './preprocess'
 import type { RawNote } from './types'
 
@@ -25,10 +25,26 @@ export async function transcribePiano(
   const stitcher = new RollStitcher(starts.length, audio16k.length, hop)
   opts.onProgress?.(0, starts.length)
   for (let i = 0; i < starts.length; i++) {
-    stitcher.push(await runner.run(sliceSegment(audio16k, starts[i])))
+    const seg = sliceSegment(audio16k, starts[i])
+    // near-silent windows (intros, endings, pauses) cannot contain notes: skip the model
+    stitcher.push(isSilent(seg) ? silentRolls() : await runner.run(seg))
     opts.onProgress?.(i + 1, starts.length)
   }
   return rollsToNotes(stitcher.finish())
+}
+
+/** The whole window peaks below -60 dBFS. */
+export function isSilent(seg: Float32Array): boolean {
+  let peak = 0
+  for (let i = 0; i < seg.length; i++) {
+    const v = Math.abs(seg[i])
+    if (v > peak) peak = v
+  }
+  return peak < 0.001
+}
+
+function silentRolls(): Float32Array[] {
+  return [0, 1, 2, 3].map(() => new Float32Array(SEGMENT_FRAMES * KEYS))
 }
 
 /** Pack notes for postMessage / IndexedDB: [pitch, start, end, velocity] * n */

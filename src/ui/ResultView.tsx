@@ -22,9 +22,11 @@ interface Props {
   settings: ArrangeSettings
   /** instant re-arrange from the practice screen */
   onArrange: (patch: Partial<ArrangeSettings>) => void
+  onRename: (title: string) => void
 }
 
-export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit, settings, onArrange }: Props) {
+export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit, settings, onArrange, onRename }: Props) {
+  const [editing, setEditing] = useState(false)
   const player = useMemo(() => new Player(), [])
   const [, force] = useState(0)
   const [marks, setMarks] = useState<KeyMarks>({ hand: new Map(), target: new Map(), flash: new Map() })
@@ -130,7 +132,24 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
           <IconBack />
         </button>
         <div className="result-title">
-          <h1>{title}</h1>
+          {editing ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                const v = (new FormData(e.currentTarget).get('t') as string).trim()
+                if (v) onRename(v)
+                setEditing(false)
+              }}
+            >
+              <input className="title-input" name="t" defaultValue={title} autoFocus onBlur={(e) => e.currentTarget.form?.requestSubmit()} aria-label="Song name" />
+            </form>
+          ) : (
+            <h1>
+              <button className="title-btn" onClick={() => setEditing(true)} title="Rename">
+                {title}
+              </button>
+            </h1>
+          )}
           <div className="meta num">
             <span>{Math.round(arrangement.grid.bpm)} BPM</span>
             <span>{keyInfo}</span>

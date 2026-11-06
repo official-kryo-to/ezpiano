@@ -9,6 +9,7 @@ import { ROLL_NAMES, SEGMENT_SAMPLES } from './kong'
 import { packNotes, transcribePiano, type SegmentRunner } from './transcribe'
 
 export type WorkerRequest =
+  | { type: 'warmup'; modelUrl: string }
   | { type: 'piano'; audio: Float32Array; modelUrl: string; hopSeconds?: number }
   | { type: 'basic-pitch'; audio: Float32Array; modelUrl: string }
 
@@ -19,7 +20,10 @@ export type WorkerMessage =
   | { type: 'done'; notes: Float32Array }
   | { type: 'error'; message: string }
 
-const post = (m: WorkerMessage, transfer: Transferable[] = []) => (self as unknown as Worker).postMessage(m, transfer)
+const post = (m: WorkerMessage, transfer: Transferable[] = []) => {
+  if (m.type === 'backend') lastBackend = m.backend
+  ;(self as unknown as Worker).postMessage(m, transfer)
+}
 
 type Ort = typeof import('onnxruntime-web')
 
@@ -66,7 +70,9 @@ async function pianoRunner(modelUrl: string): Promise<SegmentRunner> {
   const gpu = await hasWebGpu()
   const ort: Ort = gpu ? await import('onnxruntime-web/webgpu') : await import('onnxruntime-web/wasm')
   // threads need cross-origin isolation (our service worker provides it after the first load)
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)) : 1
+  // leave a core or two for the page; more than 8 threads stops helping
+  const cores = navigator.hardwareConcurrency || 2
+  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(8, cores > 4 ? cores - 2 : cores - 1)) : 1
   const bytes = await fetchModel(modelUrl)
 
   const create = (eps: string[]) =>
@@ -106,12 +112,24 @@ async function pianoRunner(modelUrl: string): Promise<SegmentRunner> {
 self.addEventListener('error', (e) => post({ type: 'error', message: e.message || 'The converter crashed.' }))
 self.addEventListener('unhandledrejection', (e) => post({ type: 'error', message: String((e as PromiseRejectionEvent).reason?.message ?? e) }))
 
+// The page warms the worker up while you pick settings: runtime + model are ready on Convert.
+let warm: Promise<SegmentRunner> | null = null
+let lastBackend = ''
+const getRunner = (modelUrl: string) => (warm ??= pianoRunner(modelUrl))
+
 self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const req = ev.data
   try {
     let notes
+    if (req.type === 'warmup') {
+      await getRunner(req.modelUrl).catch(() => {
+        warm = null // try again (and report the error) on Convert
+      })
+      return
+    }
     if (req.type === 'piano') {
-      const runner = await pianoRunner(req.modelUrl)
+      const runner = await getRunner(req.modelUrl)
+      if (lastBackend) post({ type: 'backend', backend: lastBackend })
       notes = await transcribePiano(req.audio, runner, {
         hopSeconds: req.hopSeconds,
         onProgress: (done, total) => post({ type: 'progress', done, total }),

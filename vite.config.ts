@@ -52,6 +52,16 @@ export default defineConfig({
         start_url: base,
         scope: base,
         categories: ['music', 'education'],
+        // Android: Share -> ezpiano from any app that has the audio file
+        share_target: {
+          action: `${base}share-target`,
+          method: 'POST',
+          enctype: 'multipart/form-data',
+          params: { files: [{ name: 'audio', accept: ['audio/*', '.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.webm'] }] },
+        },
+        // installed desktop app: "Open with ezpiano"
+        file_handlers: [{ action: base, accept: { 'audio/*': ['.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac'] } }],
+        launch_handler: { client_mode: 'focus-existing' },
         icons: [
           { src: 'pwa-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'pwa-512.png', sizes: '512x512', type: 'image/png' },
