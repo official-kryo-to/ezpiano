@@ -2,7 +2,7 @@
  * Turns raw transcription into a two-hand arrangement for a 61-key keyboard.
  * Pure functions, so the same code runs in the browser, the worker and the tests.
  */
-import { toBeats, toSeconds } from './tempo'
+import { adjustGrid, toBeats, toSeconds } from './tempo'
 import {
   KEY_HIGH,
   KEY_LOW,
@@ -99,7 +99,7 @@ export interface MelodyParams {
 }
 
 // fitted on 16 POP909 songs (dry + cover-style audio), validated on 16 others: melody F1 0.51 -> 0.67
-export const MELODY_DEFAULTS: MelodyParams = { vel: 3.5, top: 1.2, height: 0, dur: 0, bias: 0, leap: 6, leapFree: 3 }
+export const MELODY_DEFAULTS: MelodyParams = { vel: 7, top: 2, height: 0.25, dur: 0, bias: 0.25, leap: 4.5, leapFree: 2 }
 
 /**
  * Melody line by dynamic programming. Every note gets a salience score (loud for its
@@ -288,8 +288,9 @@ function chordFor(notes: BeatNote[], b0: number, b1: number): Chord | null {
 }
 
 /** Left-hand chord accompaniment, one chord per bar (easy) or per half bar. */
-function chordAccompaniment(notes: BeatNote[], totalBeats: number, difficulty: ArrangeSettings['difficulty']): BeatNote[] {
-  const span = difficulty === 'easy' ? 4 : 2
+function chordAccompaniment(notes: BeatNote[], totalBeats: number, difficulty: ArrangeSettings['difficulty'], beatsPerBar = 4): BeatNote[] {
+  // one chord per bar on Easy, otherwise per half bar (per bar in 3/4)
+  const span = difficulty === 'easy' || beatsPerBar === 3 ? beatsPerBar : 2
   const out: BeatNote[] = []
   let prev: { chord: Chord; notes: BeatNote[] } | null = null
   for (let b0 = 0; b0 < totalBeats; b0 += span) {
@@ -342,6 +343,48 @@ function quantize(notes: BeatNote[], step: number) {
     n.sb = s
     n.eb = e
   }
+}
+
+/** Thresholds (seconds per beat) above which the quantize grid gets one step finer. */
+export const GRID = { easySlow: 0.6, mediumSlow: 1.0 }
+
+/**
+ * Quantize step in beats. Easy snaps to eighths and Medium to sixteenths, but what counts as
+ * "fast" depends on the tempo: in a slow song (or when the beat was detected at half speed) the
+ * melody moves in sixteenths that are as slow as eighths elsewhere, and snapping those to eighths
+ * would put notes in the wrong place. So slow beats get the next finer grid.
+ */
+export function gridStep(difficulty: ArrangeSettings['difficulty'], beatSeconds: number, feel: Feel = 'straight'): number {
+  if (feel === 'triplet') return difficulty !== 'easy' || beatSeconds > GRID.easySlow ? 1 / 6 : 1 / 3
+  if (difficulty === 'easy') return beatSeconds > GRID.easySlow ? 0.25 : 0.5
+  return beatSeconds > GRID.mediumSlow ? 0.125 : 0.25
+}
+
+export type Feel = 'straight' | 'triplet'
+export const FEEL = { ratio: 0.5, minShare: 0.05 }
+
+/**
+ * Straight or triplet feel (shuffle, 12/8, 6/8): do the notes between beats sit on the thirds of
+ * the beat or on its half and quarters? Triplet songs need a triplet grid, or every off-beat note
+ * is snapped to the wrong place.
+ */
+export function detectFeel(notes: RawNote[], beats: number[]): Feel {
+  let half = 0
+  let third = 0
+  let total = 0
+  let i = 0
+  for (const n of [...notes].sort((a, b) => a.start - b.start)) {
+    while (i + 1 < beats.length && beats[i + 1] <= n.start) i++
+    if (i + 1 >= beats.length || n.start < beats[0]) continue
+    const ph = (n.start - beats[i]) / (beats[i + 1] - beats[i])
+    const w = n.velocity / 127
+    const near = (x: number) => Math.abs(ph - x) < 0.06
+    total += w
+    if (near(0) || near(1)) continue
+    if (near(0.5) || near(0.25) || near(0.75)) half += w
+    else if (near(1 / 3) || near(2 / 3)) third += w
+  }
+  return third > half * FEEL.ratio && third > total * FEEL.minShare ? 'triplet' : 'straight'
 }
 
 /** Same key twice at once is impossible to play: merge duplicates and cut overlaps. */
@@ -420,7 +463,9 @@ const clampVelocity = (v: number) => Math.max(40, Math.min(110, Math.round(v)))
 
 /* ---------------- main ---------------- */
 
-export function arrange(raw: RawNote[], grid: BeatGrid, s: ArrangeSettings): Arrangement {
+export function arrange(raw: RawNote[], detected: BeatGrid, s: ArrangeSettings): Arrangement {
+  const beatsPerBar = s.beatsPerBar ?? 4
+  const grid = adjustGrid(detected, s)
   const low = s.range?.low ?? KEY_LOW
   const high = s.range?.high ?? KEY_HIGH
   const key = detectKey(raw)
@@ -443,7 +488,7 @@ export function arrange(raw: RawNote[], grid: BeatGrid, s: ArrangeSettings): Arr
   let rh: BeatNote[] = melody
   let lh: BeatNote[] = []
   if (s.output === 'chords' || (s.output === 'full' && s.difficulty === 'easy')) {
-    lh = chordAccompaniment(all, totalBeats, s.difficulty)
+    lh = chordAccompaniment(all, totalBeats, s.difficulty, beatsPerBar)
   } else if (s.output === 'full') {
     // inner voices close under the melody go to the right hand, everything else to the left
     const melodyAt = (b: number) => melody.find((m) => m.sb <= b + 0.05 && m.eb > b)
@@ -459,9 +504,11 @@ export function arrange(raw: RawNote[], grid: BeatGrid, s: ArrangeSettings): Arr
   const rhCap = s.output === 'full' ? MAX_POLY[s.difficulty].R : 1
   const lhCap = MAX_POLY[s.difficulty].L
 
+  const beatSeconds = beats.length > 1 ? (beats[beats.length - 1] - beats[0]) / (beats.length - 1) : 0.5
+  const feel = detectFeel(raw, beats)
   const finish = (list: BeatNote[], hand: Hand, cap: number) => {
     let notes = list.map((n) => ({ ...n }))
-    if (s.quantize) quantize(notes, s.difficulty === 'easy' ? 0.5 : 0.25)
+    if (s.quantize) quantize(notes, gridStep(s.difficulty, beatSeconds, feel))
     for (const n of notes) n.pitch = fitRange(n.pitch + shift, low, high)
     notes = dedupe(notes)
     notes = capPolyphony(notes, cap, hand)
@@ -488,7 +535,7 @@ export function arrange(raw: RawNote[], grid: BeatGrid, s: ArrangeSettings): Arr
     .sort((a, b) => a.start - b.start || b.pitch - a.pitch)
 
   const duration = notes.reduce((m, n) => Math.max(m, n.end), 0)
-  return { notes, grid, key, transpose: shift, duration }
+  return { notes, grid, key, transpose: shift, duration, beatsPerBar, feel }
 }
 
 /** Seconds per beat at beat index b (for display and MIDI tempo maps). */

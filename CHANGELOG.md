@@ -35,6 +35,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Rename songs by clicking the title; downloads use the new name.
 - Faster start: the model and runtime load and the audio decodes while the settings are open; silent windows skip the model; up to 8 threads on machines with more cores.
 - The app checks for updates every 30 minutes while open.
+- Play the original recording in sync with the falling notes and key lights (Watch mode, any speed); the recording is stored with the song.
+- Parts: the song is split into parts of a few bars that loop with one click; Wait for me scores each run, saves the best score per part and can move on to the next part at 90%.
+- "Rhythm looks off?" controls: count the beat at half or double speed, 3 or 4 beats in a bar (written to the MIDI file), move the bar line.
+- Triplet-feel detection (shuffle, 12/8) with a triplet quantize grid.
+- Live preview of the notes while a song converts; the screen stays on while converting or playing.
+- WebGPU safety: software GPU adapters are skipped, a slow GPU is raced against the CPU on the second window and the faster one is kept, a GPU whose output differs from the CPU's is dropped; `?gpu=off` override.
 - Dev-set tooling in `scripts/devset/` (POP909 excerpts rendered as piano covers) and tests for keyboard profiles, ranges, channels and melody quality.
 
 ### Changed
@@ -42,6 +48,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Key detection uses Temperley profiles for the key signature and Albrecht-Shanahan profiles for major vs minor: 97% of keys right on the dev set (was 90%).
 - Tempo prior moved to 80 BPM, downbeats weighted towards accented and bass notes, and a half-beat check keeps syncopated songs on the beat.
 - Wait for me: notes of both hands that land together are one chord, playing a little early counts without the song jumping ahead, the next chord stays lit while paused and pressing it starts the song, wrong keys only count while the song is waiting.
+- The quantize grid follows the tempo: slow songs get sixteenths on Easy (thirty-seconds on Medium), which keeps notes where they are played. Easy right hand vs the real lead on held-out songs: 0.689 to 0.799.
+- Melody weights re-tuned against both lead lines (vocal melody and instrumental lead).
+- Re-arranging on the practice screen keeps your place in the song.
 - New app icon.
 - Easy is now the default difficulty, and Full transcription is described as a busy reference rather than something to learn from.
 - Settings: the Convert button stays visible while scrolling; the header shows the detected keyboard and connects on click.

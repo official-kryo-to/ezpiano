@@ -3,8 +3,9 @@ import { buildResult, buildResultWithStages, prewarm, transcribeFile, type Progr
 import { midiFileName } from './engine/midi'
 import { packNotes, unpackNotes } from './engine/transcribe'
 import type { BeatGrid, ConvertSettings, EngineKind, RawNote } from './engine/types'
-import { getRecent, loadSettings, saveRecent, saveSettings, updateRecent } from './lib/storage'
+import { MAX_STORED_AUDIO, getRecent, loadSettings, saveRecent, saveSettings, updateRecent } from './lib/storage'
 import { midi } from './lib/midi'
+import { keepAwake } from './lib/wakeLock'
 import { installComputerKeys } from './practice/keys'
 import { useMidiStatus } from './ui/KeyboardPanel'
 import { Home } from './ui/Home'
@@ -22,6 +23,8 @@ interface Song {
   raw: RawNote[]
   settings: ConvertSettings
   cache?: { clean: RawNote[]; grid: BeatGrid }
+  audio?: Blob
+  progress: Record<string, number>
 }
 
 type Screen =
@@ -53,6 +56,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const abort = useRef<AbortController | null>(null)
+  const [preview, setPreview] = useState<{ notes: Float32Array[]; duration: number }>({ notes: [], duration: 0 })
   const midiStatus = useMidiStatus()
 
   useEffect(() => installComputerKeys(), [])
@@ -121,12 +125,17 @@ export default function App() {
     const ac = new AbortController()
     abort.current = ac
     busy.current = true
+    setPreview({ notes: [], duration: 0 })
+    void keepAwake(true)
     try {
-      const tr = await transcribeFile(file, settings.engine, setProgress, ac.signal)
+      const tr = await transcribeFile(file, settings.engine, setProgress, ac.signal, (notes, duration) =>
+        setPreview((p) => ({ notes: [...p.notes, notes], duration })),
+      )
       if (!tr.raw.length) throw new Error('No notes were found in this recording.')
       const title = titleOf(file.name)
       const result = await buildResultWithStages(tr.raw, fit(settings), title, setProgress, profile.file)
-      const song: Song = { id: `${Date.now()}`, title, fileName: file.name, duration: tr.duration, engine: settings.engine, raw: tr.raw, settings }
+      const audio = file.size <= MAX_STORED_AUDIO ? file : undefined
+      const song: Song = { id: `${Date.now()}`, title, fileName: file.name, duration: tr.duration, engine: settings.engine, raw: tr.raw, settings, audio, progress: {} }
       await saveRecent({
         id: song.id,
         title,
@@ -136,8 +145,9 @@ export default function App() {
         engine: settings.engine,
         settings,
         notes: packNotes(tr.raw),
-        bpm: result.grid.bpm,
+        bpm: result.arrangement.grid.bpm,
         noteCount: result.arrangement.notes.length,
+        audio,
       }).catch(() => setToast('Could not save to Recent (storage is full or blocked).'))
       showResult(song, result)
     } catch (e) {
@@ -146,13 +156,14 @@ export default function App() {
     } finally {
       busy.current = false
       abort.current = null
+      void keepAwake(false)
     }
   }
 
   const openRecent = async (id: string) => {
     const r = await getRecent(id)
     if (!r) return setToast('That song is no longer saved.')
-    const song: Song = { id: r.id, title: r.title, fileName: r.fileName, duration: r.duration, engine: r.engine, raw: unpackNotes(r.notes), settings: fit(r.settings) }
+    const song: Song = { id: r.id, title: r.title, fileName: r.fileName, duration: r.duration, engine: r.engine, raw: unpackNotes(r.notes), settings: fit(r.settings), audio: r.audio, progress: r.progress ?? {} }
     showResult(song, buildResult(song.raw, song.settings, song.title, undefined, profile.file))
   }
 
@@ -207,7 +218,7 @@ export default function App() {
             saveSettings(settings)
             const song = { ...screen.song, settings }
             const result = buildResult(song.raw, settings, song.title, song.cache, profile.file)
-            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.grid.bpm })
+            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.arrangement.grid.bpm })
             showResult(song, result)
           }}
         />
@@ -217,6 +228,7 @@ export default function App() {
         <ProgressCard
           fileName={screen.file.name}
           progress={progress}
+          preview={preview}
           engine={screen.settings.engine}
           error={error}
           onCancel={() => {
@@ -241,12 +253,21 @@ export default function App() {
             showResult(song, buildResult(song.raw, song.settings, title, song.cache, profile.file))
           }}
           settings={screen.song.settings}
+          audio={screen.song.audio}
+          progress={screen.song.progress}
+          onProgress={(key, value) => {
+            const song = screen.song
+            if ((song.progress[key] ?? 0) >= value) return
+            song.progress = { ...song.progress, [key]: value }
+            void updateRecent(song.id, { progress: song.progress })
+            setScreen((sc) => (sc.kind === 'result' && sc.song.id === song.id ? { ...sc, song: { ...sc.song, progress: song.progress } } : sc))
+          }}
           onArrange={(patch) => {
             const settings = fit({ ...screen.song.settings, ...patch })
             saveSettings(settings)
             const song = { ...screen.song, settings }
             const result = buildResult(song.raw, settings, song.title, song.cache, profile.file)
-            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.grid.bpm })
+            void updateRecent(song.id, { settings, noteCount: result.arrangement.notes.length, bpm: result.arrangement.grid.bpm })
             showResult(song, result)
           }}
         />

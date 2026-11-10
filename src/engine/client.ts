@@ -11,7 +11,7 @@ import { buildMidi } from './midi'
 import { analyzeTempo } from './tempo'
 import { unpackNotes } from './transcribe'
 import type { ArrangeSettings, Arrangement, BeatGrid, EngineKind, RawNote } from './types'
-import type { WorkerMessage, WorkerRequest } from './worker'
+import type { GpuMode, WorkerMessage, WorkerRequest } from './worker'
 
 export type StageId = 'decode' | 'model' | 'transcribe' | 'cleanup' | 'tempo' | 'hands' | 'midi'
 
@@ -48,6 +48,18 @@ export interface Transcription {
 let warmWorker: Worker | null = null
 let warmDecode: { file: Blob; rate: number; promise: Promise<{ audio: Float32Array; duration: number }> } | null = null
 
+/** `?gpu=off` or `?gpu=force` in the address (remembered) overrides the automatic GPU / CPU choice. */
+function gpuMode(): GpuMode {
+  try {
+    const q = new URLSearchParams(location.search).get('gpu')
+    if (q === 'off' || q === 'force' || q === 'any' || q === 'auto') localStorage.setItem('ezpiano:gpu', q)
+    const v = localStorage.getItem('ezpiano:gpu')
+    return v === 'off' || v === 'force' || v === 'any' ? v : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+
 const newWorker = () => new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' })
 
 /** Start loading the runtime + model and decoding the file before Convert is pressed. */
@@ -60,7 +72,7 @@ export function prewarm(file: Blob, engine: EngineKind) {
   }
   if (engine === 'piano' && !warmWorker) {
     warmWorker = newWorker()
-    warmWorker.postMessage({ type: 'warmup', modelUrl: asset('models/kong-piano-int8.onnx') } satisfies WorkerRequest)
+    warmWorker.postMessage({ type: 'warmup', modelUrl: asset('models/kong-piano-int8.onnx'), gpu: gpuMode() } satisfies WorkerRequest)
   }
 }
 
@@ -79,6 +91,8 @@ export function transcribeFile(
   engine: EngineKind,
   onProgress: (p: Progress) => void,
   signal?: AbortSignal,
+  /** rough notes as they are found (packed like packNotes) plus the song length, for a live preview */
+  onPartial?: (notes: Float32Array, duration: number) => void,
 ): Promise<Transcription> {
   return new Promise((resolve, reject) => {
     let worker: Worker | null = null
@@ -108,6 +122,8 @@ export function transcribeFile(
         if (m.type === 'model') {
           const mb = (x: number) => (x / 1e6).toFixed(1)
           onProgress({ stage: 'model', fraction: m.total ? m.loaded / m.total : 0, detail: `${mb(m.loaded)} of ${mb(m.total)} MB` })
+        } else if (m.type === 'partial') {
+          onPartial?.(m.notes, duration)
         } else if (m.type === 'backend') {
           backend = m.backend
         } else if (m.type === 'progress') {
@@ -134,7 +150,7 @@ export function transcribeFile(
       }
       const req: WorkerRequest =
         engine === 'piano'
-          ? { type: 'piano', audio, modelUrl: asset('models/kong-piano-int8.onnx') }
+          ? { type: 'piano', audio, modelUrl: asset('models/kong-piano-int8.onnx'), gpu: gpuMode() }
           : { type: 'basic-pitch', audio, modelUrl: asset('models/basic-pitch/model.json') }
       onProgress({ stage: engine === 'piano' ? 'model' : 'transcribe', fraction: 0 })
       worker.postMessage(req, [audio.buffer])

@@ -31,6 +31,12 @@ export interface ArrangeSettings {
   quantize: boolean
   /** playable keys (MIDI numbers, inclusive). Defaults to the EZ-220's 61 keys, C2..C7. */
   range?: { low: number; high: number }
+  /** manual rhythm fixes for when detection is off: count the beat at half or double speed */
+  tempoScale?: 0.5 | 1 | 2
+  /** 4 (default) or 3 beats in a bar */
+  beatsPerBar?: 3 | 4
+  /** move the bar line this many beats later (0..beatsPerBar-1) */
+  barShift?: number
 }
 
 export interface ConvertSettings extends ArrangeSettings {
@@ -67,6 +73,8 @@ export interface Arrangement {
   /** semitones applied (manual or auto) */
   transpose: number
   duration: number
+  beatsPerBar: number
+  feel: 'straight' | 'triplet'
 }
 
 /** Default range: the EZ-220's 61 keys, C2..C7. Keyboard profiles can change it. */

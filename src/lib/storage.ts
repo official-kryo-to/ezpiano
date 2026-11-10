@@ -15,9 +15,16 @@ export interface RecentSong {
   notes: Float32Array // packed raw notes, see packNotes()
   bpm: number
   noteCount: number
+  /** the original recording, kept so it can be played in sync while practising */
+  audio?: Blob
+  /** best Wait-for-me accuracy (0..1) per part, keyed by "difficulty:hands:part" */
+  progress?: Record<string, number>
 }
 
-export type RecentMeta = Omit<RecentSong, 'notes'>
+export type RecentMeta = Omit<RecentSong, 'notes' | 'audio'>
+
+/** Recordings larger than this are not stored (the song itself still is). */
+export const MAX_STORED_AUDIO = 40 * 1024 * 1024
 
 export async function saveRecent(song: RecentSong) {
   await set(song.id, song, store)
@@ -39,7 +46,7 @@ export async function listRecent(): Promise<RecentMeta[]> {
   const all = await Promise.all(ks.map((k) => get<RecentSong>(k, store)))
   return all
     .filter((s): s is RecentSong => !!s)
-    .map(({ notes: _n, ...meta }) => meta)
+    .map(({ notes: _n, audio: _a, ...meta }) => meta)
     .sort((a, b) => b.createdAt - a.createdAt)
 }
 

@@ -3,6 +3,7 @@ import { keyName } from '../engine/arrange'
 import type { ArrangeSettings, Arrangement, Difficulty, OutputMode } from '../engine/types'
 import { audio } from '../lib/audio'
 import { midi } from '../lib/midi'
+import { keepAwake } from '../lib/wakeLock'
 import { keys } from '../practice/keys'
 import { Player, type HandSel, type Mode } from '../practice/player'
 import { Segmented, Toggle, fmtTime } from './controls'
@@ -23,10 +24,20 @@ interface Props {
   /** instant re-arrange from the practice screen */
   onArrange: (patch: Partial<ArrangeSettings>) => void
   onRename: (title: string) => void
+  /** the original recording, if it was kept */
+  audio?: Blob
+  /** best Wait-for-me accuracy per part */
+  progress: Record<string, number>
+  onProgress: (key: string, accuracy: number) => void
 }
 
-export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit, settings, onArrange, onRename }: Props) {
+const DONE = 0.9
+
+export function ResultView({ title, arrangement, engineLabel, onBack, onDownload, onEdit, settings, onArrange, onRename, audio: recording, progress, onProgress }: Props) {
   const [editing, setEditing] = useState(false)
+  const [hasRecording, setHasRecording] = useState(false)
+  const [autoNext, setAutoNext] = useState(true)
+  const [passMsg, setPassMsg] = useState<string | null>(null)
   const player = useMemo(() => new Player(), [])
   const [, force] = useState(0)
   const [marks, setMarks] = useState<KeyMarks>({ hand: new Map(), target: new Map(), flash: new Map() })
@@ -40,13 +51,88 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
 
   const bars = useMemo(() => {
     const b = arrangement.grid.beats
-    return b.filter((_, i) => i % 4 === 0).map((x) => x - b[0])
+    return b.filter((_, i) => i % arrangement.beatsPerBar === 0).map((x) => x - b[0])
   }, [arrangement])
 
   useEffect(() => {
     const b = arrangement.grid.beats
-    player.load(arrangement.notes, arrangement.duration, b.map((x) => x - b[0]))
+    const at = player.t
+    player.load(arrangement.notes, arrangement.duration, b.map((x) => x - b[0]), arrangement.beatsPerBar)
+    player.originalOffset = b[0]
+    if (at > 0) player.seek(Math.min(at, arrangement.duration)) // keep the place when re-arranging
   }, [player, arrangement])
+
+  // the original recording, played in sync on request
+  useEffect(() => {
+    if (!recording) return
+    const url = URL.createObjectURL(recording)
+    const el = new Audio(url)
+    el.preload = 'auto'
+    el.volume = midi.prefs.volume
+    el.addEventListener('loadedmetadata', () => setHasRecording(true))
+    el.addEventListener('error', () => {
+      setHasRecording(false)
+      player.setOriginal(null)
+    })
+    player.setOriginal(el, player.originalOffset)
+    return () => {
+      player.setOriginal(null)
+      el.src = ''
+      URL.revokeObjectURL(url)
+      setHasRecording(false)
+    }
+  }, [player, recording])
+
+  // parts of the song (a few bars each) for step-by-step practice
+  const sections = useMemo(() => {
+    const end = arrangement.duration + 0.3
+    const inSong = bars.filter((b) => b < arrangement.duration - 0.2)
+    const per = inSong.length <= 8 ? 2 : inSong.length <= 96 ? 4 : 8
+    const out: { a: number; b: number }[] = []
+    for (let i = 0; i < inSong.length; i += per) out.push({ a: inSong[i], b: Math.min(bars[i + per] ?? end, end) })
+    const tail = inSong.length % per
+    if (out.length > 1 && tail !== 0 && tail < per / 2) {
+      const last = out.pop()!
+      out[out.length - 1].b = last.b
+    }
+    return out
+  }, [bars, arrangement.duration])
+  const partKey = (i: number | 'all') => `${settings.difficulty}:${settings.output}:${player.hands}:${i}`
+  const samePart = (x: { a: number; b: number } | null, y: { a: number; b: number }) => !!x && Math.abs(x.a - y.a) < 0.02 && Math.abs(x.b - y.b) < 0.02
+
+  useEffect(() => {
+    player.onPass = (p) => {
+      const i = sections.findIndex((s) => samePart(p, s))
+      const pct = Math.round(p.accuracy * 100)
+      if (i < 0) {
+        if (p.a < 0.05 && p.b >= arrangement.duration - 0.05) onProgress(partKey('all'), p.accuracy)
+        return
+      }
+      onProgress(partKey(i), p.accuracy)
+      const next = sections[i + 1]
+      if (autoNext && p.accuracy >= DONE) {
+        if (next) {
+          player.setLoop(next)
+          setPassMsg(`Part ${i + 1}: ${pct}%. On to part ${i + 2}.`)
+        } else {
+          player.setLoop(null)
+          setPassMsg(`Part ${i + 1}: ${pct}%. That was the last part.`)
+        }
+      } else setPassMsg(`Part ${i + 1}: ${pct}%${p.accuracy >= DONE ? '' : `. ${Math.round(DONE * 100)}% moves you on`}`)
+    }
+    return () => {
+      player.onPass = null
+    }
+  })
+  useEffect(() => {
+    if (!passMsg) return
+    const id = setTimeout(() => setPassMsg(null), 2600)
+    return () => clearTimeout(id)
+  }, [passMsg])
+  useEffect(() => {
+    void keepAwake(player.playing)
+    return () => void keepAwake(false)
+  }, [player, player.playing])
   useEffect(() => player.onChange(() => force((x) => x + 1)), [player])
   useEffect(() => keys.subscribe((e) => e.type === 'on' && player.handleKey(e.note)), [player])
   // re-route sound when the keyboard connects or its settings change
@@ -54,7 +140,10 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
     player.reroute()
     player.seek(player.t)
   }, [player, status.output?.id, status.profile.id])
-  useEffect(() => audio.setVolume(volume), [volume])
+  useEffect(() => {
+    audio.setVolume(volume)
+    if (player.original) player.original.volume = volume
+  }, [volume, player, hasRecording])
   useEffect(() => () => player.dispose(), [player])
 
   // clock + key highlights
@@ -190,8 +279,42 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
                 : 'Done. Press play to go again.'}
             </div>
           )}
+          {passMsg && (
+            <div className="fall-overlay pass" role="status">
+              {passMsg}
+            </div>
+          )}
         </div>
         <Keyboard marks={marks} low={low} high={high} />
+        {sections.length > 1 && (
+          <div className="parts" role="group" aria-label="Parts of the song">
+            <button className={`part ${loop ? '' : 'on'}`} onClick={() => player.setLoop(null)} aria-pressed={!loop}>
+              All
+            </button>
+            {sections.map((sec, i) => {
+              const best = progress[partKey(i)]
+              const on = samePart(loop, sec)
+              return (
+                <button
+                  key={i}
+                  className={`part ${on ? 'on' : ''} ${best != null ? (best >= DONE ? 'done' : 'tried') : ''}`}
+                  aria-pressed={on}
+                  title={`Part ${i + 1}: ${fmtTime(sec.a)} to ${fmtTime(sec.b)}${best != null ? `, best ${Math.round(best * 100)}%` : ''}`}
+                  onClick={() => {
+                    if (on) player.setLoop(null)
+                    else {
+                      player.setLoop(sec)
+                      player.seek(sec.a)
+                    }
+                  }}
+                >
+                  {i + 1}
+                  {best != null && best < DONE && <small className="num">{Math.round(best * 100)}</small>}
+                </button>
+              )
+            })}
+          </div>
+        )}
         <div className="transport">
           <button className="play" onClick={() => player.toggle()} aria-label={player.playing ? 'Pause' : 'Play'}>
             {player.playing ? <IconPause /> : <IconPlay />}
@@ -258,6 +381,53 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
               ]}
             />
           </div>
+          <details className="fix">
+            <summary>Rhythm looks off?</summary>
+            <div className="ctl">
+              <span className="ctl-label">Count the beat</span>
+              <Segmented<'0.5' | '1' | '2'>
+                label="Count the beat"
+                full
+                value={String(settings.tempoScale ?? 1) as '0.5' | '1' | '2'}
+                onChange={(v) => onArrange({ tempoScale: Number(v) as 0.5 | 1 | 2, barShift: 0 })}
+                options={[
+                  { value: '0.5', label: 'Half speed' },
+                  { value: '1', label: 'As found' },
+                  { value: '2', label: 'Double' },
+                ]}
+              />
+            </div>
+            <div className="ctl">
+              <span className="ctl-label">Beats in a bar</span>
+              <Segmented<'4' | '3'>
+                label="Beats in a bar"
+                full
+                value={String(settings.beatsPerBar ?? 4) as '4' | '3'}
+                onChange={(v) => onArrange({ beatsPerBar: Number(v) as 3 | 4, barShift: 0 })}
+                options={[
+                  { value: '4', label: '4' },
+                  { value: '3', label: '3 (waltz)' },
+                ]}
+              />
+            </div>
+            <div className="ctl">
+              <span className="ctl-label">
+                <span>Bar line</span>
+                <span className="num faint">{(settings.barShift ?? 0) === 0 ? 'as found' : `${settings.barShift} beat${settings.barShift === 1 ? '' : 's'} later`}</span>
+              </span>
+              <div className="ctl-row">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => onArrange({ barShift: ((settings.barShift ?? 0) + 1) % (settings.beatsPerBar ?? 4) })}
+                >
+                  Move one beat later
+                </button>
+              </div>
+            </div>
+            <p className="kb-note">
+              {Math.round(arrangement.grid.bpm)} BPM{arrangement.feel === 'triplet' ? ', triplet feel' : ''}. Turn on the metronome to check: the high click should land on beat 1.
+            </p>
+          </details>
           {(settings.output === 'full' || settings.difficulty === 'original') && (
             <p className="kb-note" style={{ marginTop: 8 }}>
               Too much going on? Easy with Chords gives one tune note at a time and one chord per bar.
@@ -304,6 +474,33 @@ export function ResultView({ title, arrangement, engineLabel, onBack, onDownload
               </span>
             </div>
           </div>
+          {hasRecording && (
+            <div className="ctl">
+              <span className="ctl-label">Sound</span>
+              <Segmented<'piano' | 'recording'>
+                label="Sound"
+                full
+                value={player.useOriginal ? 'recording' : 'piano'}
+                onChange={(v) => player.setUseOriginal(v === 'recording')}
+                options={[
+                  { value: 'piano', label: 'Piano' },
+                  { value: 'recording', label: 'Recording' },
+                ]}
+              />
+              {player.useOriginal && (player.mode === 'wait' || arrangement.transpose !== 0) && (
+                <p className="kb-note">
+                  {player.mode === 'wait'
+                    ? 'The recording plays in Watch mode. Wait for me uses the piano, because it stops and starts.'
+                    : 'The recording is in the original key, so it will not match the transposed notes.'}
+                </p>
+              )}
+            </div>
+          )}
+          {player.mode === 'wait' && sections.length > 1 && (
+            <div className="ctl">
+              <Toggle label="Move to the next part at 90%" checked={autoNext} onChange={setAutoNext} />
+            </div>
+          )}
           <div className="ctl">
             <label className="ctl-label" htmlFor="speed">
               <span>Speed</span>

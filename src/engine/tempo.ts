@@ -355,3 +355,36 @@ export function toSeconds(b: number, beats: number[]): number {
   const i = Math.floor(b)
   return beats[i] + (b - i) * (beats[i + 1] - beats[i])
 }
+
+/**
+ * Manual rhythm fixes applied on top of the detected grid: shift the bar line, then count the
+ * beat at half or double speed. The grid always still starts on a bar line at or before the music.
+ */
+export function adjustGrid(grid: BeatGrid, opts: { tempoScale?: number; beatsPerBar?: number; barShift?: number }): BeatGrid {
+  const bpb = opts.beatsPerBar ?? 4
+  const scale = opts.tempoScale ?? 1
+  const shift = (((opts.barShift ?? 0) % bpb) + bpb) % bpb
+  if (scale === 1 && shift === 0) return grid
+  let beats = [...grid.beats]
+  if (beats.length < 2) return grid
+  if (scale === 2) {
+    const out: number[] = []
+    beats.forEach((b, i) => {
+      out.push(b)
+      if (i + 1 < beats.length) out.push((b + beats[i + 1]) / 2)
+    })
+    beats = out
+  } else if (scale === 0.5) {
+    beats = beats.filter((_, i) => i % 2 === 0)
+    if (beats.length < 2) return grid
+  }
+  if (shift) {
+    // the bar now starts `shift` beats later; add the beats of the bar before so no note is cut off
+    const p = beats[1] - beats[0]
+    const lead: number[] = []
+    for (let k = bpb - shift; k >= 1; k--) lead.push(beats[0] - k * p)
+    beats = [...lead, ...beats]
+  }
+  const ibis = beats.slice(1).map((b, i) => b - beats[i]).sort((a, b) => a - b)
+  return { ...grid, beats, bpm: Math.round((60 / ibis[ibis.length >> 1]) * 10) / 10 }
+}

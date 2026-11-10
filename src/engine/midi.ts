@@ -29,7 +29,7 @@ export function buildMidi(arr: Arrangement, title: string, channels = { rh: RH_C
       }
     }
   }
-  midi.header.timeSignatures = [{ ticks: 0, timeSignature: [4, 4], measures: 0 }]
+  midi.header.timeSignatures = [{ ticks: 0, timeSignature: [arr.beatsPerBar === 3 ? 3 : 4, 4], measures: 0 }]
   midi.header.update()
 
   const rh = midi.addTrack()

@@ -36,6 +36,15 @@ export interface Stats {
   wrong: number
 }
 
+export interface PassResult {
+  a: number
+  b: number
+  hits: number
+  wrong: number
+  /** share of key presses that were right, 0..1 */
+  accuracy: number
+}
+
 export class Player {
   all: ArrangedNote[] = []
   practiced: ArrangedNote[] = []
@@ -48,6 +57,7 @@ export class Player {
   metronome = false
   /** beat times (s) and which are bar starts, for the metronome */
   beats: number[] = []
+  beatsPerBar = 4
   private beatIdx = 0
 
   t = 0
@@ -69,6 +79,16 @@ export class Player {
   private chordHits = new Set<ArrangedNote>()
   private listeners = new Set<() => void>()
 
+  /** the original recording, played in sync instead of the app's piano (Watch mode) */
+  original: HTMLAudioElement | null = null
+  /** song time 0 is this many seconds into the recording */
+  originalOffset = 0
+  useOriginal = false
+
+  /** one run through the loop (or the whole song) in Wait for me, for progress tracking */
+  private pass = { hits: 0, wrong: 0, from: 0 }
+  onPass: ((p: PassResult) => void) | null = null
+
   onChange(fn: () => void) {
     this.listeners.add(fn)
     return () => {
@@ -79,10 +99,11 @@ export class Player {
     this.listeners.forEach((l) => l())
   }
 
-  load(notes: ArrangedNote[], duration: number, beats: number[] = []) {
+  load(notes: ArrangedNote[], duration: number, beats: number[] = [], beatsPerBar = 4) {
     this.all = notes
     this.duration = duration
     this.beats = beats
+    this.beatsPerBar = beatsPerBar
     this.finished = false
     this.reroute()
     this.seek(0)
@@ -95,7 +116,8 @@ export class Player {
     const others = this.all.filter((n) => !mine(n))
     const keyboardSings = midi.connected && midi.prefs.guideSound
     const appPlaysGuide = this.mode === 'watch' && !keyboardSings
-    this.sound = (appPlaysGuide ? this.all : others).slice().sort((a, b) => a.start - b.start)
+    // with the original recording playing, the app's piano stays silent: the recording has every part
+    this.sound = this.originalActive ? [] : (appPlaysGuide ? this.all : others).slice().sort((a, b) => a.start - b.start)
     this.lights = []
     if (this.mode === 'watch') {
       for (const n of this.practiced) {
@@ -107,6 +129,24 @@ export class Player {
     }
     this.chords = groupChords(this.practiced)
     if (midi.sendsGuide) midi.applyGuideVolume()
+  }
+
+  get originalActive() {
+    return this.useOriginal && !!this.original && this.mode === 'watch'
+  }
+
+  setOriginal(el: HTMLAudioElement | null, offset = 0) {
+    this.original?.pause()
+    this.original = el
+    this.originalOffset = offset
+    if (!el) this.useOriginal = false
+    this.reroute()
+  }
+
+  setUseOriginal(on: boolean) {
+    this.useOriginal = on && !!this.original
+    this.reroute()
+    this.seek(this.t, true)
   }
 
   setMode(m: Mode) {
@@ -124,7 +164,7 @@ export class Player {
 
   setSpeed(s: number) {
     this.speed = Math.max(0.25, Math.min(1.5, s))
-    if (this.playing) this.seek(this.t)
+    if (this.playing) this.seek(this.t, true)
     this.emit()
   }
 
@@ -168,12 +208,15 @@ export class Player {
   silence() {
     audio.stopAll()
     midi.allOff()
+    this.original?.pause()
     this.waiting = false
   }
 
-  seek(t: number) {
+  /** Jump to a time. `keepPass` keeps the running Wait-for-me pass (speed or routing changes). */
+  seek(t: number, keepPass = false) {
     this.t = Math.max(0, Math.min(t, this.duration))
     this.silence()
+    if (!keepPass) this.pass = { hits: 0, wrong: 0, from: this.t }
     this.soundIdx = lowerBound(this.sound, this.t)
     this.scheduledUntil = this.t
     this.lightIdx = this.lights.findIndex((e) => e.t >= this.t)
@@ -184,6 +227,16 @@ export class Player {
     this.beatIdx = this.beats.findIndex((b) => b >= this.t - 0.001)
     if (this.beatIdx < 0) this.beatIdx = this.beats.length
     this.anchor()
+    if (this.playing && this.originalActive && this.original) {
+      const el = this.original
+      try {
+        el.currentTime = Math.max(0, this.t + this.originalOffset)
+        el.playbackRate = this.speed
+        void el.play().catch(() => {})
+      } catch {
+        /* not ready yet: tick() re-syncs */
+      }
+    }
     if (this.mode === 'watch' && this.playing) {
       // keys that should already be down at this point
       for (const n of this.practiced) if (n.start < this.t && n.end > this.t) midi.lightOn(n.pitch, n.velocity, n.hand)
@@ -244,8 +297,18 @@ export class Player {
       }
     }
     if (this.loop && t >= this.loop.b) {
-      this.seek(this.loop.a)
+      this.reportPass(this.loop.a, this.loop.b)
+      if (this.loop) this.seek(this.loop.a) // onPass may have moved or cleared the loop
       return this.t
+    }
+    // the recording is the master clock while it plays: follow it instead of nudging the sound
+    if (this.originalActive && this.original && !this.original.paused && this.original.readyState >= 2) {
+      const drift = this.original.currentTime - this.originalOffset - t
+      if (Math.abs(drift) > 0.045 && Math.abs(drift) < 5) {
+        t += drift
+        this.t = t
+        this.anchor()
+      }
     }
     this.t = t
     this.scheduleAudio(Math.min(t + LOOKAHEAD * this.speed, limit))
@@ -255,9 +318,17 @@ export class Player {
       this.playing = false
       this.finished = true
       this.silence()
+      this.reportPass(0, this.duration)
       this.emit()
     }
     return this.t
+  }
+
+  private reportPass(a: number, b: number) {
+    const { hits, wrong, from } = this.pass
+    if (this.mode === 'wait' && hits > 0 && from <= a + 0.05) {
+      this.onPass?.({ a, b, hits, wrong, accuracy: hits / (hits + wrong) })
+    }
   }
 
   private scheduleAudio(until: number) {
@@ -275,7 +346,7 @@ export class Player {
     while (this.beatIdx < this.beats.length && this.beats[this.beatIdx] < until) {
       const b = this.beats[this.beatIdx]
       const at = this.ctxStart + (b - this.songStart) / this.speed
-      if (this.metronome && at >= audio.now - 0.02) audio.click(Math.max(at, audio.now), this.beatIdx % 4 === 0)
+      if (this.metronome && at >= audio.now - 0.02) audio.click(Math.max(at, audio.now), this.beatIdx % this.beatsPerBar === 0)
       this.beatIdx++
     }
   }
@@ -304,6 +375,7 @@ export class Player {
       // a wrong key only counts while the song is actually waiting for you
       if (this.waiting && !c.some((x) => x.pitch === note)) {
         this.stats.wrong++
+        this.pass.wrong++
         this.flash(note, 'bad')
         this.emit()
       }
@@ -314,6 +386,7 @@ export class Player {
     if (!this.playing) this.play() // pressing the first highlighted key starts the song
     this.chordHits.add(n)
     this.stats.hits++
+    this.pass.hits++
     this.flash(note, 'good')
     if (c.every((x) => this.chordHits.has(x))) {
       for (const x of c) midi.lightOff(x.pitch, x.hand)
@@ -331,6 +404,7 @@ export class Player {
   dispose() {
     this.playing = false
     this.silence()
+    this.onPass = null
     midi.restoreVolume()
     this.listeners.clear()
   }

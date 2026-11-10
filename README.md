@@ -34,10 +34,13 @@ installable PWA.
    - **Keyboard**: Auto (detected from the USB device) or a model; sets the key range and channels
    - **Quantize to the beat**: on by default
    - **Recording**: Piano (default) or Other instruments (uses Basic Pitch)
-3. Watch the progress (named stages and a time estimate).
+3. Watch the progress (named stages, a time estimate, and a live preview of the notes as they are heard).
 4. On the result screen, preview with falling notes, change speed, loop a section, turn on the metronome, and
    press **Download .mid**. Difficulty and output can be switched right there (and transpose under
    **Arrangement**). That takes milliseconds, because the raw transcription is kept.
+
+   **Rhythm looks off?** (in the Arrangement box) fixes what detection got wrong: count the beat at half or double
+   speed, 3 or 4 beats in a bar, and move the bar line. Turn on the metronome to check.
 
    If a result feels like too much at once, use **Easy** with **Chords**: one tune note at a time and one chord per
    bar. **Full** keeps every note the model heard, which is useful as a reference but busy to learn from.
@@ -80,7 +83,13 @@ ezpiano picks a profile from the USB device name; you can override it under **Ke
      - Notes of both hands that land together count as one chord.
      - Wrong keys flash red on screen, right ones green.
    - **Right / Left / Both**: if you practise one hand, the other hand plays from the app.
-5. **Speed** (25 to 150%), **A/B loop**, **Metronome** and **App volume** work in both modes.
+5. **Parts:** the song is split into parts of a few bars (the numbered buttons under the keyboard). Click one to
+   loop it. In Wait for me, each run through a part is scored; at 90% the part turns green and, if you like, the
+   loop moves on to the next part by itself. Scores are saved with the song.
+6. **Sound:** Piano plays the arrangement. **Recording** plays your original audio in sync instead (Watch mode),
+   also slowed down, so you hear the real song while the keys light up.
+7. **Speed** (25 to 150%), **A/B loop**, **Metronome** and **App volume** work in both modes. The screen stays on
+   while a song plays or converts.
 
 Without a MIDI keyboard you can still practise: play on the on-screen keys or with the computer keyboard
 (A W S E D F T G Y H U J K, Z / X change octave).
@@ -122,6 +131,7 @@ audio file
      give short staccato notes a playable length
   -> tempo: inter-onset-interval histogram + dynamic-programming beat tracker, on-beat check, downbeat (bass, accents, harmony)
   -> key: Temperley profiles for the key signature, Albrecht-Shanahan for major vs minor
+  -> feel: straight or triplet grid; the quantize step follows the tempo
   -> hands: melody by dynamic programming (loudness, contour, top of chord) = right hand, the rest = left hand,
      difficulty rules, chord detection for the left-hand chords, quantize, transpose / auto key,
      octave-fit to the keyboard, polyphony caps (max 4 per hand)
@@ -151,6 +161,19 @@ arranged for piano with separate melody tracks plus beat, chord and key annotati
 | Downbeat F | 0.608 | **0.632** |
 | Chord root accuracy (left hand) | 0.892 | 0.894 |
 
+A later round measured what you actually get, the finished arrangement after quantizing, against the song's
+lead lines (vocal melody plus the instrumental lead between phrases, onset within 70 ms). Held-out songs, clean and
+cover-style audio together:
+
+| Held-out, finished arrangement | Before | After |
+|---|---|---|
+| Easy right hand vs the real lead | 0.689 | **0.799** |
+| Medium right hand vs the real lead | 0.790 | **0.812** |
+| Original, all notes | 0.904 | **0.920** |
+
+The earlier melody score of 0.675 was pessimistic: most "wrong" notes were the instrumental lead, which a player
+does want. Against both lead lines the right hand scores 0.82 before quantizing.
+
 **What made the difference**
 
 - **Loudness check:** mastered covers are 10 to 15 dB louder than the model's training data. Turning them down
@@ -163,6 +186,11 @@ arranged for piano with separate melody tracks plus beat, chord and key annotati
   above the tune.
 - **Cleanup fix:** the old 60 ms minimum length deleted real notes in fast playing (a Scarlatti sonata went from
   F1 0.960 to 0.628 after cleanup). Now short notes are dropped only if they are also weak.
+- **Grid that follows the tempo:** Easy snaps to eighths, but in slow songs (beat longer than 0.6 s) the tune moves
+  in sixteenths that are just as slow, and snapping those to eighths put notes in the wrong place. Slow beats now get
+  the next finer grid. This is the biggest part of the Easy gain above.
+- **Triplet feel:** shuffle and 12/8 songs are detected (notes on the thirds of the beat) and snapped to a triplet
+  grid.
 - **Tempo and key:**
   - a tempo prior around 80 BPM, downbeats weighted by accents and bass, and an on-beat check for syncopated
     songs (beat F on the tuning set 0.70 to 0.78),
@@ -229,7 +257,13 @@ Batching windows and parallel branch execution gave no speed-up in WebAssembly.
 
 **Speed:** about 5 s of compute per 10 s window on 4 CPU threads (WebAssembly; measured in Node). That is roughly
 2 to 3 minutes for a 3-minute song on a laptop. Without cross-origin isolation (first visit, Safari) it runs
-single-threaded, about 3x slower. WebGPU is used when available; its speed was not measured here.
+single-threaded, about 3x slower.
+
+**WebGPU:** used when a real GPU is present. It was tested with a software GPU adapter and gives the same result
+as the CPU path. A GPU is not always faster, so unless its first windows are quick, the second window is run on
+both GPU and CPU: the faster one does the rest, and a GPU whose answer differs from the CPU's is dropped. Software
+adapters are skipped. Speed on real GPUs was not measured here. `?gpu=off` in the address turns the GPU off for good
+(`?gpu=auto` turns it back on).
 
 ## Develop
 

@@ -1,4 +1,4 @@
-import { KEYS, RollStitcher, SEGMENT_FRAMES, rollsToNotes, segmentStarts, sliceSegment } from './kong'
+import { KEYS, RollStitcher, SAMPLE_RATE, SEGMENT_FRAMES, rollsToNotes, segmentStarts, sliceSegment } from './kong'
 import { prepareAudio, type PreprocessMode } from './preprocess'
 import type { RawNote } from './types'
 
@@ -16,7 +16,13 @@ export const DEFAULT_HOP_SECONDS = 7.5
 export async function transcribePiano(
   audio16k: Float32Array,
   runner: SegmentRunner,
-  opts: { hopSeconds?: number; preprocess?: PreprocessMode; onProgress?: (done: number, total: number) => void } = {},
+  opts: {
+    hopSeconds?: number
+    preprocess?: PreprocessMode
+    onProgress?: (done: number, total: number) => void
+    /** rough notes of each window as soon as it is done, for a live preview */
+    onPartial?: (notes: RawNote[]) => void
+  } = {},
 ): Promise<RawNote[]> {
   const hop = opts.hopSeconds ?? DEFAULT_HOP_SECONDS
   // bring loud, mastered covers back to the level the model was trained on
@@ -27,7 +33,21 @@ export async function transcribePiano(
   for (let i = 0; i < starts.length; i++) {
     const seg = sliceSegment(audio16k, starts[i])
     // near-silent windows (intros, endings, pauses) cannot contain notes: skip the model
-    stitcher.push(isSilent(seg) ? silentRolls() : await runner.run(seg))
+    const silent = isSilent(seg)
+    const out = silent ? silentRolls() : await runner.run(seg)
+    stitcher.push(out)
+    if (opts.onPartial && !silent) {
+      // notes of this window's own stretch of the song (the part the stitcher keeps)
+      const ctx = (10 - hop) / 2
+      const from = i === 0 ? 0 : ctx
+      const to = i === starts.length - 1 ? 10 : ctx + hop
+      const t0 = starts[i] / SAMPLE_RATE
+      const [onset, offset, frame, velocity] = out
+      const part = rollsToNotes({ frames: SEGMENT_FRAMES, onset, offset, frame, velocity })
+        .filter((n) => n.start >= from && n.start < to)
+        .map((n) => ({ ...n, start: n.start + t0, end: n.end + t0 }))
+      opts.onPartial(part)
+    }
     opts.onProgress?.(i + 1, starts.length)
   }
   return rollsToNotes(stitcher.finish())

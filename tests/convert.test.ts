@@ -4,7 +4,7 @@
  */
 import { Midi } from '@tonejs/midi'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { arrange } from '../src/engine/arrange'
+import { arrange, gridStep } from '../src/engine/arrange'
 import { cleanNotes } from '../src/engine/cleanup'
 import { buildMidi, midiFileName } from '../src/engine/midi'
 import { analyzeTempo } from '../src/engine/tempo'
@@ -118,8 +118,9 @@ describe.each(OUTPUTS)('MIDI output: %s', (output) => {
 
     expect(midi.header.tempos[0].bpm).toBeCloseTo(grid.bpm, 1)
     expect(midi.header.timeSignatures[0].timeSignature).toEqual([4, 4])
-    // quantized: every note starts on the 1/8 (easy) or 1/16 grid
-    const step = midi.header.ppq / (difficulty === 'easy' ? 2 : 4)
+    // quantized: every note starts on the grid for this difficulty and tempo
+    const beatSeconds = (grid.beats[grid.beats.length - 1] - grid.beats[0]) / (grid.beats.length - 1)
+    const step = Math.round(midi.header.ppq * gridStep(difficulty, beatSeconds, arr.feel))
     for (const t of midi.tracks) for (const n of t.notes) expect(n.ticks % step).toBe(0)
   })
 })

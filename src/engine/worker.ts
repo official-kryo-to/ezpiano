@@ -9,14 +9,15 @@ import { ROLL_NAMES, SEGMENT_SAMPLES } from './kong'
 import { packNotes, transcribePiano, type SegmentRunner } from './transcribe'
 
 export type WorkerRequest =
-  | { type: 'warmup'; modelUrl: string }
-  | { type: 'piano'; audio: Float32Array; modelUrl: string; hopSeconds?: number }
+  | { type: 'warmup'; modelUrl: string; gpu?: GpuMode }
+  | { type: 'piano'; audio: Float32Array; modelUrl: string; hopSeconds?: number; gpu?: GpuMode }
   | { type: 'basic-pitch'; audio: Float32Array; modelUrl: string }
 
 export type WorkerMessage =
   | { type: 'model'; loaded: number; total: number }
   | { type: 'backend'; backend: string }
   | { type: 'progress'; done: number; total: number }
+  | { type: 'partial'; notes: Float32Array }
   | { type: 'done'; notes: Float32Array }
   | { type: 'error'; message: string }
 
@@ -27,11 +28,22 @@ const post = (m: WorkerMessage, transfer: Transferable[] = []) => {
 
 type Ort = typeof import('onnxruntime-web')
 
-async function hasWebGpu(): Promise<boolean> {
-  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu
+/** auto: real GPUs only, raced against the CPU. any: also software adapters (testing). force: GPU, no race. */
+export type GpuMode = 'auto' | 'any' | 'force' | 'off'
+
+/** A real GPU adapter is available. Software adapters (SwiftShader, llvmpipe) are much slower than WASM. */
+async function hasWebGpu(mode: GpuMode): Promise<boolean> {
+  if (mode === 'off') return false
+  type Adapter = { isFallbackAdapter?: boolean; info?: { vendor?: string; architecture?: string; description?: string; isFallbackAdapter?: boolean } }
+  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<Adapter | null> } }).gpu
   if (!gpu) return false
   try {
-    return !!(await gpu.requestAdapter())
+    const adapter = (await gpu.requestAdapter()) as Adapter | null
+    if (!adapter) return false
+    if (mode === 'force' || mode === 'any') return true
+    const info = adapter.info ?? {}
+    const software = /swiftshader|llvmpipe|software|basic render/i.test(`${info.vendor} ${info.architecture} ${info.description}`)
+    return !(adapter.isFallbackAdapter || info.isFallbackAdapter || software)
   } catch {
     return false
   }
@@ -66,44 +78,79 @@ async function fetchModel(url: string): Promise<Uint8Array> {
   return out
 }
 
-async function pianoRunner(modelUrl: string): Promise<SegmentRunner> {
-  const gpu = await hasWebGpu()
+/** A GPU window faster than this is kept without comparing against the CPU. */
+const GPU_FAST_SECONDS = 3
+
+async function pianoRunner(modelUrl: string, gpuMode: GpuMode = 'auto'): Promise<SegmentRunner> {
+  const gpu = await hasWebGpu(gpuMode)
   const ort: Ort = gpu ? await import('onnxruntime-web/webgpu') : await import('onnxruntime-web/wasm')
   // threads need cross-origin isolation (our service worker provides it after the first load)
   // leave a core or two for the page; more than 8 threads stops helping
   const cores = navigator.hardwareConcurrency || 2
-  ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.max(1, Math.min(8, cores > 4 ? cores - 2 : cores - 1)) : 1
+  const threads = self.crossOriginIsolated ? Math.max(1, Math.min(8, cores > 4 ? cores - 2 : cores - 1)) : 1
+  ort.env.wasm.numThreads = threads
   const bytes = await fetchModel(modelUrl)
+  const label = (b: 'webgpu' | 'wasm') => (b === 'webgpu' ? 'webgpu' : `wasm${threads > 1 ? ` x${threads}` : ''}`)
 
   const create = (eps: string[]) =>
     ort.InferenceSession.create(bytes, { executionProviders: eps, graphOptimizationLevel: 'all' })
-  let session: InferenceSession
-  let backend = gpu ? 'webgpu' : 'wasm'
-  try {
-    session = await create(gpu ? ['webgpu', 'wasm'] : ['wasm'])
-  } catch (e) {
-    if (!gpu) throw e
-    session = await create(['wasm'])
-    backend = 'wasm'
+  let gpuSession: InferenceSession | null = null
+  let cpuSession: InferenceSession | null = null
+  let active: 'webgpu' | 'wasm' = gpu ? 'webgpu' : 'wasm'
+  if (gpu) {
+    try {
+      gpuSession = await create(['webgpu', 'wasm'])
+    } catch {
+      active = 'wasm'
+    }
   }
-  post({ type: 'backend', backend: `${backend}${ort.env.wasm.numThreads > 1 ? ` x${ort.env.wasm.numThreads}` : ''}` })
+  if (active === 'wasm') cpuSession = await create(['wasm'])
+  post({ type: 'backend', backend: label(active) })
 
-  const runOnce = async (segment: Float32Array) => {
+  const runOn = async (session: InferenceSession, segment: Float32Array) => {
     const out = await session.run({ audio: new ort.Tensor('float32', segment, [1, SEGMENT_SAMPLES]) })
     return ROLL_NAMES.map((n) => (out[n] as Tensor).data as Float32Array)
   }
+  const useCpu = async () => {
+    cpuSession ??= await create(['wasm'])
+    active = 'wasm'
+    post({ type: 'backend', backend: label('wasm') })
+  }
+
+  // The GPU is not always the faster choice (integrated or busy GPUs). On the second window, when
+  // its shaders are compiled, a slow GPU is raced against the CPU on the same audio; the faster
+  // one does the rest. The same race checks that the GPU's answer matches the CPU's.
+  let gpuRuns = 0
+  let decided = gpuMode === 'force'
   return {
     async run(segment) {
+      if (active === 'wasm') return runOn(cpuSession!, segment)
+      let out: Float32Array[]
+      const t0 = performance.now()
       try {
-        return await runOnce(segment)
-      } catch (e) {
-        if (backend !== 'webgpu') throw e
+        out = await runOn(gpuSession!, segment)
+      } catch {
         // some GPUs fail at run time: fall back to CPU and carry on
-        session = await create(['wasm'])
-        backend = 'wasm'
-        post({ type: 'backend', backend })
-        return runOnce(segment)
+        await useCpu()
+        return runOn(cpuSession!, segment)
       }
+      const gpuSeconds = (performance.now() - t0) / 1000
+      gpuRuns++
+      if (!decided && gpuSeconds <= GPU_FAST_SECONDS) decided = true
+      if (!decided && gpuRuns >= 2) {
+        decided = true
+        cpuSession ??= await create(['wasm'])
+        const t1 = performance.now()
+        const cpuOut = await runOn(cpuSession, segment)
+        const cpuSeconds = (performance.now() - t1) / 1000
+        let diff = 0
+        for (let i = 0; i < cpuOut[0].length; i += 7) diff = Math.max(diff, Math.abs(cpuOut[0][i] - out[0][i]))
+        if (diff > 0.05 || cpuSeconds < gpuSeconds) {
+          await useCpu()
+          return cpuOut
+        }
+      }
+      return out
     },
   }
 }
@@ -115,24 +162,28 @@ self.addEventListener('unhandledrejection', (e) => post({ type: 'error', message
 // The page warms the worker up while you pick settings: runtime + model are ready on Convert.
 let warm: Promise<SegmentRunner> | null = null
 let lastBackend = ''
-const getRunner = (modelUrl: string) => (warm ??= pianoRunner(modelUrl))
+const getRunner = (modelUrl: string, gpu?: GpuMode) => (warm ??= pianoRunner(modelUrl, gpu))
 
 self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const req = ev.data
   try {
     let notes
     if (req.type === 'warmup') {
-      await getRunner(req.modelUrl).catch(() => {
+      await getRunner(req.modelUrl, req.gpu).catch(() => {
         warm = null // try again (and report the error) on Convert
       })
       return
     }
     if (req.type === 'piano') {
-      const runner = await getRunner(req.modelUrl)
+      const runner = await getRunner(req.modelUrl, req.gpu)
       if (lastBackend) post({ type: 'backend', backend: lastBackend })
       notes = await transcribePiano(req.audio, runner, {
         hopSeconds: req.hopSeconds,
         onProgress: (done, total) => post({ type: 'progress', done, total }),
+        onPartial: (part) => {
+          const packed = packNotes(part)
+          post({ type: 'partial', notes: packed }, [packed.buffer])
+        },
       })
     } else {
       post({ type: 'backend', backend: 'basic-pitch' })

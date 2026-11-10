@@ -1328,3 +1328,109 @@ select {
   background: rgba(0, 0, 0, 0.3);
   outline: none;
 }
+
+/* ---------- parts (step-by-step practice) ---------- */
+.parts {
+  display: flex;
+  gap: 4px;
+  padding: var(--s1) var(--s3);
+  overflow-x: auto;
+  border-top: 1px solid var(--line);
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+
+.part {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 3px;
+  min-width: 36px;
+  height: 32px;
+  padding: 0 var(--s1);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 30px;
+  flex-shrink: 0;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
+.part:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+
+.part.on {
+  border-color: var(--rh);
+  background: rgba(143, 179, 255, 0.12);
+  color: var(--text);
+}
+
+.part.done {
+  color: var(--ok);
+  border-color: rgba(127, 209, 168, 0.4);
+}
+
+.part.done.on {
+  background: rgba(127, 209, 168, 0.12);
+}
+
+.part small {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.fall-overlay.pass {
+  top: auto;
+  bottom: var(--s3);
+  border-color: rgba(127, 209, 168, 0.4);
+}
+
+.fix {
+  margin-top: var(--s2);
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.fix summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  list-style-position: inside;
+}
+
+.fix summary:hover {
+  color: var(--text);
+}
+
+.fix[open] summary {
+  margin-bottom: 12px;
+}
+
+@media (max-width: 640px) {
+  .parts {
+    padding-left: var(--s2);
+    padding-right: var(--s2);
+  }
+}
+
+.live {
+  margin-top: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-sm);
+}
+
+.live canvas {
+  width: 100%;
+  height: 88px;
+  border-radius: var(--r);
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.25);
+}
